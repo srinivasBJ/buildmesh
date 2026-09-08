@@ -1,0 +1,127 @@
+requirements:
+  - id: REQ-PROJ-001
+    title: Persistent project state
+    description: Every project has a persistent graph root and scoped nodes.
+    priority: high
+    status: IMPLEMENTED
+    source: product-thesis
+    implementation: src/buildmesh/storage.py:Store.create_project
+    verification: tests/test_workflow.py::test_progress_evidence_is_linked_to_its_project_task
+    marker: implemented
+  - id: REQ-EVID-001
+    title: Derived evidence provenance
+    description: Derived observations retain parent evidence and graph lineage.
+    priority: high
+    status: IMPLEMENTED
+    source: evidence-policy
+    implementation: src/buildmesh/service.py:record_perception
+    verification: tests/test_live_integrations.py::test_live_connectors_are_recorded_as_evidence_and_drive_reviewable_work
+    marker: implemented
+  - id: REQ-EVID-002
+    title: Untrusted observation boundary
+    description: Model output is schema validated before becoming evidence.
+    priority: high
+    status: IMPLEMENTED
+    source: evidence-policy
+    implementation: src/buildmesh/inference.py:parse_perception_result
+    verification: tests/test_live_integrations.py::test_model_observation_contract_rejects_untrusted_extra_fields
+    marker: implemented
+  - id: REQ-AGENT-001
+    title: Grounded recommendations
+    description: Recommendations identify supporting evidence.
+    priority: high
+    status: IMPLEMENTED
+    source: product-thesis
+    implementation: src/buildmesh/agents.py:RecommendationAgent
+    verification: tests/test_workflow.py::test_schedule_variance_requires_a_review_with_task_scoped_evidence
+    marker: implemented
+  - id: REQ-ACTION-001
+    title: Human approval gate
+    description: Consequential recommendation actions require a reviewer decision.
+    priority: high
+    status: IMPLEMENTED
+    source: product-thesis
+    implementation: src/buildmesh/storage.py:Store.review_recommendation
+    verification: tests/test_workflow.py::test_recommendation_requires_review_and_creates_task_after_approval
+    marker: implemented
+  - id: REQ-ACTION-002
+    title: Idempotent action materialization
+    description: An approved recommendation materializes at most one action.
+    priority: high
+    status: IMPLEMENTED
+    source: action-policy
+    implementation: src/buildmesh/storage.py:recommendation_materializations
+    verification: tests/test_workflow.py::test_approved_recommendation_is_not_recreated_from_same_evidence
+    marker: implemented
+  - id: REQ-ACTION-003
+    title: Atomic approval provenance
+    description: Approval, task creation, and provenance roll back together on failure.
+    priority: high
+    status: IMPLEMENTED
+    source: action-policy
+    implementation: src/buildmesh/storage.py:Store.review_recommendation
+    verification: tests/test_workflow.py::test_approval_rolls_back_if_approved_action_provenance_cannot_be_written
+    marker: implemented
+  - id: REQ-EDGE-001
+    title: Explicit inference backend
+    description: Perception declares qnn or cpu backend and target.
+    priority: high
+    status: IMPLEMENTED
+    source: competition-constraints
+    implementation: src/buildmesh/inference.py:parse_perception_result
+    verification: tests/test_live_integrations.py::test_backend_selection_is_explicit_and_unknown_device_is_not_claimed
+    marker: implemented
+  - id: REQ-EDGE-002
+    title: Snapdragon claim verification
+    description: NPU execution cannot be claimed without validated hardware evidence.
+    priority: high
+    status: UNVERIFIED
+    source: competition-constraints
+    implementation: src/buildmesh/validation.py:validation_state
+    verification: tests/test_live_integrations.py::test_competition_package_records_unverified_qnn_failure_without_faking_hardware
+    marker: architecture-and-test
+  - id: REQ-ENV-001
+    title: Forecast and historical separation
+    description: Future climate planning must remain distinct from forecast evidence.
+    priority: medium
+    status: PLANNED
+    source: roadmap
+    implementation: unknown
+    verification: future scenario
+    marker: future
+  - id: REQ-ENV-002
+    title: Environmental task linkage
+    description: Environmental recommendations must identify affected tasks and evidence.
+    priority: medium
+    status: PARTIAL
+    source: product-thesis
+    implementation: src/buildmesh/agents.py:RiskAgent
+    verification: tests/scenarios/SCENARIO-004.json
+    marker: weather-only
+  - id: REQ-UNC-001
+    title: Explicit unknowns
+    description: Missing information remains UNKNOWN rather than being inferred as fact.
+    priority: high
+    status: PARTIAL
+    source: uncertainty-model
+    implementation: src/buildmesh/validation.py
+    verification: tests/test_live_integrations.py::test_backend_selection_is_explicit_and_unknown_device_is_not_claimed
+    marker: partial
+  - id: REQ-UNC-002
+    title: Conflicting evidence safety
+    description: Contradictions must require review rather than silently resolve.
+    priority: high
+    status: PARTIAL
+    source: uncertainty-model
+    implementation: src/buildmesh/agents.py:ProjectStateAgent
+    verification: tests/scenarios/SCENARIO-006.json
+    marker: partial
+  - id: REQ-CAD-001
+    title: CAD/BIM geometry provenance
+    description: Future geometry claims must retain source geometry provenance.
+    priority: medium
+    status: PLANNED
+    source: roadmap
+    implementation: unknown
+    verification: future scenario
+    marker: future

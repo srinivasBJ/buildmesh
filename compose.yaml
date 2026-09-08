@@ -1,0 +1,12 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      BUILDMESH_DATABASE: /data/buildmesh.db
+    volumes:
+      - buildmesh_data:/data
+
+volumes:
+  buildmesh_data:

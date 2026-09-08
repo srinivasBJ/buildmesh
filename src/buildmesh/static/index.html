@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#101a2e">
+    <title>BuildMesh workspace</title>
+    <link rel="stylesheet" href="/static/app.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="BuildMesh home"><span class="brand-mark">B</span>BuildMesh</a>
+      <p>Construction intelligence, kept accountable.</p>
+      <div class="status"><span></span> Local-first workspace</div>
+    </header>
+
+    <main class="shell">
+      <section class="intro">
+        <div>
+          <p class="eyebrow">OPENMESH / HUMAN-IN-THE-LOOP</p>
+          <h1>Know what changed. <em>Decide what happens next.</em></h1>
+          <p class="lede">BuildMesh connects field evidence, project state, and external context into recommendations that require a named reviewer before any work is created.</p>
+        </div>
+        <div class="intro-actions">
+          <button id="walkthrough" class="button primary">Load synthetic walkthrough</button>
+          <small>Clearly labelled sample evidence — never model output.</small>
+        </div>
+      </section>
+
+      <section class="toolbar" aria-label="Project controls">
+        <label>Active project
+          <select id="project-picker" aria-label="Active project"></select>
+        </label>
+        <button id="reload" class="button quiet">Refresh workspace</button>
+        <button id="open-project" class="button quiet">New project</button>
+      </section>
+
+      <p id="flash" class="flash" role="status" aria-live="polite"></p>
+
+      <section id="empty-state" class="empty-state">
+        <p class="eyebrow">START HERE</p>
+        <h2>A project becomes a living, auditable record.</h2>
+        <p>Create a project or load the synthetic walkthrough to see the full intake → risk → review → action loop.</p>
+      </section>
+
+      <div id="workspace" hidden>
+        <section id="project-summary" class="project-summary"></section>
+
+        <section class="metric-grid" aria-label="Project summary">
+          <article><span>Evidence</span><strong id="metric-evidence">0</strong><small>project-scoped records</small></article>
+          <article><span>Pending review</span><strong id="metric-review">0</strong><small>approval required</small></article>
+          <article><span>Open tasks</span><strong id="metric-tasks">0</strong><small>in the project graph</small></article>
+          <article><span>Agent runs</span><strong id="metric-runs">0</strong><small>hashed executions</small></article>
+        </section>
+
+        <section class="panel-grid intake-grid">
+          <article class="panel">
+            <div class="panel-heading"><div><p class="eyebrow">01 / OBSERVE</p><h2>Record field update</h2></div></div>
+            <form id="task-form" class="inline-form">
+              <label>New work package<input name="title" minlength="2" placeholder="Foundation F-12 concrete placement" required></label>
+              <label>Planned quantity<input name="planned_quantity_m3" type="number" min="0.1" step="any" placeholder="42"></label>
+              <button class="button quiet" type="submit">Add task</button>
+            </form>
+            <form id="progress-form" class="form-grid">
+              <label>Task <select id="progress-task" name="task_ref" required></select></label>
+              <label>Reported completion (%)<input name="reported_percent" type="number" min="0" max="100" value="85" required></label>
+              <label>Planned quantity<input name="planned_quantity" type="number" min="0.1" value="42" required></label>
+              <label>Completed quantity<input name="completed_quantity" type="number" min="0" value="35.5" required></label>
+              <label>Reporter<input name="reporter" type="email" value="worker@example.com" required></label>
+              <button class="button primary" type="submit">Record update</button>
+            </form>
+          </article>
+
+          <article class="panel">
+            <div class="panel-heading"><div><p class="eyebrow">02 / CONTEXT</p><h2>Add local evidence</h2></div></div>
+            <form id="document-form" class="upload-row"><label>Plan or method document<input name="file" type="file" accept="application/pdf,text/plain" required></label><button class="button quiet" type="submit">Store document</button></form>
+            <form id="image-form" class="upload-row"><label>Site image<input name="file" type="file" accept="image/png,image/jpeg,image/webp" required></label><button class="button quiet" type="submit">Store image</button></form>
+            <div class="context-actions"><button id="weather" class="button quiet" type="button">Refresh weather</button><button id="orchestrate" class="button primary" type="button">Run intelligence</button></div>
+            <p class="hint">Image analysis runs only when a local QNN/ONNX or YOLO provider is configured. BuildMesh fails closed when it is not.</p>
+          </article>
+        </section>
+
+        <section class="content-grid">
+          <article class="panel wide-panel">
+            <div class="panel-heading"><div><p class="eyebrow">03 / RECOMMEND</p><h2>Review queue</h2></div><span class="chip">Human decision required</span></div>
+            <div id="recommendations" class="stack"></div>
+          </article>
+          <article class="panel">
+            <div class="panel-heading"><div><p class="eyebrow">PROJECT MEMORY</p><h2>Evidence trail</h2></div></div>
+            <div id="evidence" class="stack compact"></div>
+          </article>
+          <article class="panel">
+            <div class="panel-heading"><div><p class="eyebrow">OPENMESH</p><h2>Agent trace</h2></div></div>
+            <div id="agent-runs" class="stack compact"></div>
+          </article>
+          <article class="panel">
+            <div class="panel-heading"><div><p class="eyebrow">TIMELINE</p><h2>Recorded events</h2></div></div>
+            <div id="timeline" class="stack compact"></div>
+          </article>
+        </section>
+
+        <section class="panel ask-panel">
+          <div><p class="eyebrow">GROUNDED QUESTION</p><h2>Ask the project record</h2><p>Answers cite only evidence from this project.</p></div>
+          <form id="ask-form"><input name="question" value="What is the latest progress?" aria-label="Project question" required><button class="button primary" type="submit">Ask</button></form>
+          <div id="answer" class="answer" hidden></div>
+        </section>
+      </div>
+    </main>
+
+    <dialog id="project-dialog">
+      <form id="project-form">
+        <div class="dialog-heading"><div><p class="eyebrow">NEW PROJECT</p><h2>Create a project record</h2></div><button id="close-project" class="icon-button" type="button" aria-label="Close">×</button></div>
+        <label>Project name<input name="name" minlength="2" maxlength="160" placeholder="Bengaluru Corridor Expansion" required></label>
+        <label>Location<input name="location" placeholder="Bengaluru, Karnataka"></label>
+        <div class="form-grid two"><label>Latitude<input name="latitude" type="number" step="any" placeholder="12.9716"></label><label>Longitude<input name="longitude" type="number" step="any" placeholder="77.5946"></label></div>
+        <button class="button primary" value="default" type="submit">Create project</button>
+      </form>
+    </dialog>
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>
