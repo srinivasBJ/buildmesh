@@ -151,6 +151,31 @@ class Store:
             con.execute("INSERT INTO graph_edges VALUES (?, ?, ?, ?, ?, ?, ?)", (edge["id"], project_id, source_id, target_id, relation, self._dump(edge["attributes"]), edge["created_at"]))
         return edge
 
+    def add_match_decision_atomic(self, project_id: str, source_id: str, target_id: str, attributes: dict[str, Any], review: Recommendation | None = None, fail_after_decision: bool = False, relation: str = "match_decision") -> dict[str, Any]:
+        """Atomically persist a service-derived decision/reconciliation and review."""
+        if relation not in {"match_decision", "design_reconciliation"}:
+            raise ValueError("unsupported atomic decision relation")
+        edge = {"id": new_id("edge"), "project_id": project_id, "source_id": source_id, "target_id": target_id, "relation": relation, "attributes": attributes, "created_at": now()}
+        with self.connection(immediate=True) as con:
+            for node_id in (source_id, target_id):
+                node = con.execute("SELECT project_id FROM graph_nodes WHERE id = ?", (node_id,)).fetchone()
+                if not node or node["project_id"] != project_id: raise ValueError("match nodes must belong to project")
+            con.execute("INSERT INTO graph_edges VALUES (?, ?, ?, ?, ?, ?, ?)", (edge["id"], project_id, source_id, target_id, edge["relation"], self._dump(attributes), edge["created_at"]))
+            if fail_after_decision: raise RuntimeError("injected decision transaction failure")
+            recommendation = None
+            if review:
+                data = review.data()
+                for evidence_id in data["evidence_ids"]:
+                    item = con.execute("SELECT project_id FROM evidence WHERE id = ?", (evidence_id,)).fetchone()
+                    if not item or item["project_id"] != project_id: raise ValueError("review evidence must belong to project")
+                con.execute("INSERT INTO recommendations (id, project_id, title, rationale, severity, evidence_ids_json, proposed_task_json, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (data["id"], project_id, data["title"], data["rationale"], data["severity"], self._dump(data["evidence_ids"]), self._dump(data["proposed_task"]) if data["proposed_task"] else None, data["status"], data["created_at"]))
+                node_id = new_id("node"); root = con.execute("SELECT id FROM graph_nodes WHERE project_id = ? AND kind = 'project' ORDER BY created_at LIMIT 1", (project_id,)).fetchone()["id"]
+                con.execute("INSERT INTO graph_nodes VALUES (?, ?, ?, ?, ?, ?)", (node_id, project_id, "recommendation", data["title"], self._dump({"recommendation_id": data["id"], "severity": data["severity"], "status": data["status"]}), data["created_at"]))
+                con.execute("INSERT INTO graph_edges VALUES (?, ?, ?, ?, ?, ?, ?)", (new_id("edge"), project_id, root, node_id, "contains", self._dump({}), data["created_at"]))
+                recommendation = data
+            con.execute("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)", (new_id("event"), project_id, f"{relation}_recorded", edge["id"], self._dump({"edge_id": edge["id"], "review_id": recommendation["id"] if recommendation else None}), now()))
+        return {"edge": edge, "recommendation": recommendation}
+
     def graph(self, project_id: str) -> dict[str, Any]:
         self.get_project(project_id)
         with self.connection() as con:

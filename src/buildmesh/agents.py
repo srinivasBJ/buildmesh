@@ -5,6 +5,7 @@ from typing import Any
 
 from .storage import Store
 from .types import Evidence, Recommendation, Severity
+from .environment import score
 
 
 @dataclass(frozen=True)
@@ -270,12 +271,71 @@ class RiskAgent:
         return result
 
 
+class ContextFusionAgent:
+    """Correlates sourced environmental risk with active work/dependencies; never certifies safety."""
+    name = "context-fusion-agent"
+
+    def run(self, store: Store, project_id: str, evidence: list[dict[str, Any]]) -> AgentResult:
+        graph = store.graph(project_id)
+        tasks = [node for node in graph["nodes"] if node["kind"] == "task" and node["attributes"].get("status") == "in_progress"]
+        contexts = [item for item in evidence if item["kind"] == "environmental_context"]
+        twin_observations = [item for item in evidence if item["kind"] == "twin_observation"]
+        conflicts = [item for item in evidence if item["kind"] == "environmental_conflict"]
+        nodes = {node["id"]: node for node in graph["nodes"]}
+        findings, cited = [], []
+        for task in tasks:
+            activity = task["attributes"].get("activity", "excavation")
+            try:
+                assessment = score(activity, contexts)
+            except ValueError:
+                continue
+            incomplete_dependencies = [edge for edge in graph["edges"] if edge["relation"] == "depends_on" and edge["source_id"] == task["id"] and nodes.get(edge["target_id"], {"attributes": {}})["attributes"].get("status") != "completed"]
+            risks = [factor for factor in assessment["factors"] if factor.get("effect") == "risk"]
+            stale = [factor for factor in assessment["factors"] if factor["factor"] == "stale_context"]
+            unknown_soil = [item for item in contexts if item["payload"]["kind"] in {"soil_context", "terrain_context"} and item["payload"]["epistemic_state"] == "UNKNOWN"]
+            task_components = {edge["target_id"] for edge in graph["edges"] if edge["relation"] == "affects_component" and edge["source_id"] == task["id"]}
+            relevant_twins = [item for item in twin_observations if item["payload"].get("component_id") in task_components]
+            related_conflicts = [item for item in conflicts if any(identifier in {factor.get("evidence_id") for factor in assessment["factors"]} for identifier in item["payload"].get("evidence_ids", []))]
+            if not (risks and incomplete_dependencies) and not stale and not unknown_soil and not related_conflicts:
+                continue
+            dependency_ids = [item["id"] for item in evidence if item["kind"] == "task_state" and item["payload"].get("task_id") in {task["id"], *(edge["target_id"] for edge in incomplete_dependencies)}]
+            ids = sorted({factor["evidence_id"] for factor in assessment["factors"] if "evidence_id" in factor} | {item["id"] for item in relevant_twins} | {item["id"] for item in unknown_soil} | {item["id"] for item in related_conflicts} | set(dependency_ids))
+            trace = ([{"type": "environment", "evidence_id": factor["evidence_id"], "epistemic_state": "STALE" if factor["factor"] == "stale_context" else "VERIFIED", "factor": factor["factor"], "threshold": factor.get("threshold"), "weight": assessment["heuristic"]["weight"]} for factor in assessment["factors"] if "evidence_id" in factor]
+                     + [{"type": "twin_observation", "evidence_id": item["id"], "epistemic_state": item["payload"]["epistemic_state"], "component_id": item["payload"]["component_id"], "zone_id": item["payload"].get("zone_id")} for item in relevant_twins]
+                     + [{"type": "dependency", "evidence_id": identifier, "epistemic_state": "VERIFIED"} for identifier in dependency_ids]
+                     + [{"type": "unknown_context", "evidence_id": item["id"], "epistemic_state": "UNKNOWN", "factor": item["payload"]["kind"]} for item in unknown_soil]
+                     + [{"type": "environmental_conflict", "evidence_id": item["id"], "epistemic_state": "CONFLICTING"} for item in related_conflicts])
+            factors = [entry["type"] for entry in trace]
+            state = "CONFLICTING" if related_conflicts else "STALE" if stale else "UNKNOWN" if unknown_soil else "NEEDS_REVIEW"
+            findings.append({"type": "multi_factor_environmental_risk", "severity": "high" if risks and incomplete_dependencies else "medium", "task_id": task["id"], "task_label": task["label"], "affected_component_ids": sorted(task_components), "component_scope": "component" if task_components else "UNKNOWN", "evidence_id": ids[0] if ids else None, "evidence_ids": ids, "factors": factors, "reasoning_trace": {"task_id": task["id"], "affected_scope": sorted(task_components) if task_components else "UNKNOWN", "factors": trace, "requires_review": True}, "assessment": assessment, "epistemic_state": state, "assumptions": [assessment["heuristic"]["status"], "only explicit task-to-component links establish component relevance"], "requires_human_review": True})
+            cited.extend(ids)
+        result = AgentResult(self.name, findings, sorted(set(cited)))
+        store.record_agent_run(project_id, self.name, {"context_ids": [item["id"] for item in contexts]}, {"findings": findings, "evidence_ids": result.evidence_ids})
+        return result
+
+class DesignRealityAgent:
+    """Reads persisted service-layer reconciliations; it cannot mutate project state."""
+    name = "design-reality-agent"
+    def run(self, store: Store, project_id: str, evidence: list[dict[str, Any]]) -> AgentResult:
+        graph = store.graph(project_id)
+        findings = [{"type": "design_reality", "planned_component_id": edge["source_id"], **edge["attributes"]} for edge in graph["edges"] if edge["relation"] == "design_reconciliation"]
+        ids = sorted({identifier for item in findings for identifier in item.get("trace", {}).get("evidence_ids", [])})
+        store.record_agent_run(project_id, self.name, {"reconciliation_count": len(findings)}, {"findings": findings, "evidence_ids": ids})
+        return AgentResult(self.name, findings, ids)
+
+
 class RecommendationAgent:
     name = "recommendation-agent"
 
     def run(self, store: Store, project_id: str, risks: AgentResult) -> list[dict[str, Any]]:
         created: list[dict[str, Any]] = []
         for risk in risks.findings:
+            if risk["type"] == "multi_factor_environmental_risk":
+                title = "Review environmental context and prerequisite before continuing work"
+                if not risk["evidence_ids"] or store.has_recommendation_for_evidence(project_id, title, risk["evidence_ids"][0]):
+                    continue
+                rec = Recommendation(project_id=project_id, title=title, rationale=f"{risk['task_label']} is affected by: {', '.join(risk['factors'])}. Review the task timing and incomplete prerequisite before continuing. Scoring is a configurable planning heuristic, not an engineering certification.", severity=Severity(risk["severity"]), evidence_ids=risk["evidence_ids"], proposed_task={"title": "Review environmental constraints and prerequisite", "assignee_role": "site_engineer", "due_within_hours": 12, "requires_human_confirmation": True})
+                created.append(store.add_recommendation(rec))
             if risk["type"] == "weather_window_risk":
                 if store.has_recommendation_for_evidence(project_id, "Review waterproofing schedule before forecast rain", risk["evidence_id"]):
                     continue
@@ -335,6 +395,8 @@ class OpenMeshOrchestrator:
         self.material_agent = MaterialAgent()
         self.dependency_agent = DependencyAgent()
         self.plan_constraint_agent = PlanConstraintAgent()
+        self.context_fusion_agent = ContextFusionAgent()
+        self.design_reality_agent = DesignRealityAgent()
         self.risk_agent = RiskAgent()
         self.recommendation_agent = RecommendationAgent()
 
@@ -346,6 +408,9 @@ class OpenMeshOrchestrator:
         materials = self.material_agent.run(self.store, project_id, evidence)
         dependencies = self.dependency_agent.run(self.store, project_id, evidence)
         plan_constraints = self.plan_constraint_agent.run(self.store, project_id, evidence)
+        context_fusion = self.context_fusion_agent.run(self.store, project_id, evidence)
+        design_reality = self.design_reality_agent.run(self.store, project_id, evidence)
         risks = self.risk_agent.run(self.store, project_id, evidence, state, documents, schedule, materials, dependencies, plan_constraints)
+        risks = AgentResult(risks.agent, [*risks.findings, *context_fusion.findings], sorted(set([*risks.evidence_ids, *context_fusion.evidence_ids])))
         recommendations = self.recommendation_agent.run(self.store, project_id, risks)
-        return {"project_id": project_id, "agent_results": [{"agent": documents.agent, "findings": documents.findings}, {"agent": state.agent, "findings": state.findings}, {"agent": schedule.agent, "findings": schedule.findings}, {"agent": materials.agent, "findings": materials.findings}, {"agent": dependencies.agent, "findings": dependencies.findings}, {"agent": plan_constraints.agent, "findings": plan_constraints.findings}, {"agent": risks.agent, "findings": risks.findings}], "recommendations": recommendations, "human_approval_required": any(r.get("proposed_task") for r in recommendations)}
+        return {"project_id": project_id, "agent_results": [{"agent": documents.agent, "findings": documents.findings}, {"agent": state.agent, "findings": state.findings}, {"agent": schedule.agent, "findings": schedule.findings}, {"agent": materials.agent, "findings": materials.findings}, {"agent": dependencies.agent, "findings": dependencies.findings}, {"agent": plan_constraints.agent, "findings": plan_constraints.findings}, {"agent": context_fusion.agent, "findings": context_fusion.findings}, {"agent": design_reality.agent, "findings": design_reality.findings}, {"agent": risks.agent, "findings": risks.findings}], "recommendations": recommendations, "human_approval_required": any(r.get("proposed_task") for r in recommendations)}

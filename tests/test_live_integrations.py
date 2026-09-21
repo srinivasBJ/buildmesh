@@ -160,4 +160,4 @@ def test_qualcomm_result_is_separate_from_local_measurement_and_requires_source(
 
 def test_scenario_evaluator_runs_structured_regression_suite() -> None:
     report = evaluate()
-    assert report["metrics"] == {"scenario_count": 10, "passed": 9, "failed": 0, "partial": 1, "success_rate": 0.9, "unsupported_claim_rate": 0, "duplicate_action_rate": 0}
+    assert report["metrics"] == {"scenario_count": 88, "passed": 88, "failed": 0, "partial": 0, "success_rate": 1.0, "unsupported_claim_rate": 0, "duplicate_action_rate": 0}

@@ -9,3 +9,5 @@
 - ADR-007 QNN/CPU separation: backend selection is explicit and CPU is fallback only.
 - ADR-008 Snapdragon verification: state machine gates NPU claims on evidence.
 - ADR-009 deterministic fixtures: repeatable demo and regression scenarios.
+- ADR-010 environmental source discipline: context is evidence with source type, units, scope, and freshness; fixture never impersonates live data.
+- ADR-011 deterministic context fusion: configurable heuristics expose inputs and uncertainty and cannot make engineering certifications.

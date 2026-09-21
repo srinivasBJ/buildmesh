@@ -4,6 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Callable
+from datetime import UTC, datetime
+from pathlib import Path
 
 from .service import BuildMeshService
 
@@ -66,8 +68,145 @@ def _conflicting(tmp: str) -> list[str]:
 
 
 def _stale(tmp: str) -> list[str]:
-    # No stale-context engine exists yet; evaluator makes the capability gap explicit.
-    return ["STALE handling planned"]
+    service, project = _service(tmp)
+    task = service.create_task(project["id"], "Excavation", {"activity": "excavation"})
+    service.set_task_status(project["id"], task["id"], "in_progress", "scenario@example.com")
+    context = _env(service, project["id"], retrieved_at="2020-01-01T00:00:00Z")
+    result = service.openmesh.run(project["id"])
+    return ["stale context marked" if context["payload"]["epistemic_state"] == "STALE" else "missing stale state", "stale creates review" if result["recommendations"] else "missing stale review"]
+
+
+def _env(service: BuildMeshService, project_id: str, **overrides: Any) -> dict[str, Any]:
+    now = datetime.now(UTC).isoformat()
+    values = {"rain_probability": 0.1, "precipitation_mm": 0.0}
+    values.update(overrides.pop("values", {}))
+    payload = {"kind": "weather_forecast", "source": "fixture:environment", "source_type": "fixture", "retrieved_at": now, "observed_at": now, "latitude": 12.97, "longitude": 77.59, "values": values, "units": {"rain_probability": "probability", "precipitation_mm": "mm"}, "fixture": True, "confidence": .8}
+    payload.update(overrides)
+    return service.environmental_context(project_id, **payload)
+
+
+def _env_normal(tmp: str) -> list[str]:
+    service, project = _service(tmp)
+    task = service.create_task(project["id"], "Excavation", {"activity": "excavation"})
+    service.set_task_status(project["id"], task["id"], "in_progress", "scenario@example.com")
+    context = _env(service, project["id"])
+    result = service.openmesh.run(project["id"])
+    return ["environment accepted" if context["payload"]["source_type"] == "fixture" else "missing provenance", "active task usable" if service.environment_plan(project["id"], task["id"])["environmental_score"]["suitability_score"] == 100 else "unexpected unsuitable score", "no unsupported risk" if not result["recommendations"] else "unexpected recommendation"]
+
+
+def _env_rain_excavation(tmp: str) -> list[str]:
+    service, project = _service(tmp)
+    root = service.store.project_root(project["id"])
+    zone = service.create_twin_entity(project["id"], root["id"], "zone", "Excavation")
+    component = service.create_twin_entity(project["id"], zone["id"], "component", "Exposed excavation")
+    drainage, task = service.create_task(project["id"], "Drainage", {}), service.create_task(project["id"], "Excavation", {"activity": "excavation"})
+    service.add_task_dependency(project["id"], task["id"], drainage["id"])
+    service.link_task_component(project["id"], task["id"], component["id"])
+    service.set_task_status(project["id"], task["id"], "in_progress", "scenario@example.com")
+    source = service.weather_context(project["id"], "fixture", .1, 12)
+    service.create_twin_snapshot(project["id"], "Observed", datetime.now(UTC).isoformat(), [source["id"]], [{"component_id": component["id"], "observed_state": "IN_PROGRESS", "confidence": .8, "epistemic_state": "INFERRED", "zone_id": zone["id"], "fixture": True}])
+    weather = _env(service, project["id"], values={"rain_probability": .8, "precipitation_mm": 8})
+    rec = next(item for item in service.openmesh.run(project["id"])["recommendations"] if item["title"] == "Review environmental context and prerequisite before continuing work")
+    return ["review recommendation" if rec["status"] == "pending_review" else "missing review", "environment cited" if weather["id"] in rec["evidence_ids"] else "missing environmental evidence", "component scope retained" if any(item["kind"] == "twin_observation" for item in service.store.evidence(project["id"])) else "missing twin evidence", "approval required" if rec["proposed_task"] else "missing approval gate"]
+
+
+def _env_historical(tmp: str) -> list[str]:
+    service, project = _service(tmp)
+    report = service.historical_climate_plan(project["id"], [{"label": "A", "data_period": "2010-20", "precipitation_tendency": .7, "temperature_c": "20-28", "daylight_hours": 11, "data_coverage": .8, "source": "fixture:history", "confidence": .7}, {"label": "B", "data_period": "2010-20", "precipitation_tendency": .2, "temperature_c": "20-28", "daylight_hours": 11, "data_coverage": .8, "source": "fixture:history", "confidence": .7}])
+    return ["historical classification retained" if report["evidence"]["payload"]["classification"] == "HISTORICAL_NOT_FORECAST" else "missing historical classification", "comparative candidates differ" if report["candidates"][0]["suitability_score"] != report["candidates"][1]["suitability_score"] else "missing comparison"]
+
+
+def _env_windows(tmp: str, event: bool = False) -> list[str]:
+    service, project = _service(tmp); task = service.create_task(project["id"], "Road work", {"activity": "road_work"}); _env(service, project["id"])
+    now = datetime.now(UTC).isoformat()
+    for start, end, congestion in [("08:00", "10:00", .9), ("11:00", "13:00", .1)]:
+        service.environmental_context(project["id"], kind="traffic_context", source=f"fixture:{start}", source_type="fixture", retrieved_at=now, observed_at=now, latitude=12.97, longitude=77.59, values={"congestion_index": congestion, "window_start": start, "window_end": end}, units={}, fixture=True)
+    if event:
+        service.environmental_context(project["id"], kind="local_event", source="fixture:event", source_type="fixture", retrieved_at=now, observed_at=now, latitude=12.97, longitude=77.59, values={"disruption_level": .9, "window_start": "11:00", "window_end": "13:00"}, units={}, fixture=True)
+    ranked = service.candidate_work_windows(project["id"], task["id"], [{"start": "08:00", "end": "10:00"}, {"start": "11:00", "end": "13:00"}])["ranked_windows"]
+    return ["time scoped scores differ" if ranked[0]["score"] != ranked[1]["score"] else "missing interval effect", "event overlap applied" if not event or ranked[1]["factors"][-1]["effect"] == "risk" else "missing event overlap"]
+
+
+def _env_unknown_conflict(tmp: str, conflict: bool = False) -> list[str]:
+    service, project = _service(tmp); task = service.create_task(project["id"], "Excavation", {"activity": "excavation"}); service.set_task_status(project["id"], task["id"], "in_progress", "scenario@example.com")
+    if conflict:
+        forecast = _env(service, project["id"])
+        now = datetime.now(UTC).isoformat()
+        service.environmental_context(project["id"], kind="weather_observation", source="manual:rain", source_type="manual", retrieved_at=now, observed_at=now, latitude=12.97, longitude=77.59, values={"precipitation_mm": 2}, units={})
+        conflicts = service.reconcile_environment(project["id"]); service.openmesh.run(project["id"])
+        return ["conflict retained" if conflicts and conflicts[0]["payload"]["epistemic_state"] == "CONFLICTING" else "missing conflict", "conflict drives review" if service.store.recommendations(project["id"]) else "missing conflict review", "reconcile idempotent" if not service.reconcile_environment(project["id"]) else "invalid duplicate conflict"]
+    unknown = service.unknown_environment(project["id"], "soil_context", 12.97, 77.59, "not supplied")
+    service.openmesh.run(project["id"])
+    return ["soil remains unknown" if unknown["payload"]["epistemic_state"] == "UNKNOWN" else "missing unknown state", "unknown drives review" if service.store.recommendations(project["id"]) else "missing unknown review"]
+
+
+def _env_change(tmp: str) -> list[str]:
+    service, project = _service(tmp); prerequisite = service.create_task(project["id"], "Drainage", {}); task = service.create_task(project["id"], "Excavation", {"activity": "excavation"}); service.add_task_dependency(project["id"], task["id"], prerequisite["id"]); service.set_task_status(project["id"], task["id"], "in_progress", "scenario@example.com")
+    before = _env(service, project["id"]); after = _env(service, project["id"], values={"rain_probability": .9, "precipitation_mm": 8})
+    service.openmesh.run(project["id"])
+    return ["new evidence retained" if before["id"] != after["id"] else "missing current evidence", "adverse change reflected" if service.store.recommendations(project["id"]) else "missing adverse review"]
+
+
+def _cad(tmp: str, mode: str) -> list[str]:
+    service, project = _service(tmp)
+    plan = {"schema_version": "buildmesh-spatial-plan-v1", "source": {"reference": "fixture:cad", "fixture": True}, "entities": [{"id": "B", "kind": "building", "label": "Building", "parent_id": None, "attributes": {}, "geometry": None, "orientation": "north"}, {"id": "R", "kind": "room", "label": "Bedroom", "parent_id": "B", "attributes": {"room_type": "bedroom"}, "geometry": None, "orientation": "east"}, {"id": "C", "kind": "component", "label": "Window", "parent_id": "R", "attributes": {"expected_status": "PLANNED"}, "geometry": None, "orientation": "east"}]}
+    imported = service.import_spatial_plan(project["id"], plan); building, room, planned = imported["entity_ids"]
+    if mode == "hierarchy": return ["planned hierarchy retained" if service.spatial_status(project["id"])["count"] == 3 else "missing hierarchy"]
+    if mode == "duplicate": return ["duplicate import idempotent" if service.import_spatial_plan(project["id"], plan)["status"] == "idempotent" else "invalid duplicate import"]
+    if mode == "malformed":
+        try: service.import_spatial_plan(project["id"], {"bad": True})
+        except ValueError: return ["malformed input rejected", "no trusted mutation"]
+        return ["invalid malformed input accepted"]
+    if mode == "orientation": return ["unknown orientation explicit" if service.spatial_status(project["id"])["spatial_entities"][0]["orientation"] in {"north", "UNKNOWN"} else "missing unknown orientation"]
+    if mode == "environment":
+        solar = service.environmental_solar(project["id"], 12.97, 77.59, "2026-09-08"); service.link_environment_spatial(project["id"], solar["id"], room)
+        return ["environment scoped" if solar["id"] in service.spatial_analyze(project["id"], room)["environment_evidence_ids"] else "missing environment scope"]
+    root = service.store.project_root(project["id"]); zone = service.create_twin_entity(project["id"], root["id"], "zone", "Zone"); observed = service.create_twin_entity(project["id"], zone["id"], "component", "Window")
+    task = service.create_task(project["id"], "Install window", {}); source = service.weather_context(project["id"], "fixture", .1, 1); service.link_document_spatial(project["id"], source["id"], planned, task["id"]); service.link_planned_observed(project["id"], planned, observed["id"])
+    state = "CONFLICTING" if mode == "conflict" else "IN_PROGRESS"; snap = service.create_twin_snapshot(project["id"], "S", datetime.now(UTC).isoformat(), [source["id"]], [{"component_id": observed["id"], "observed_state": state, "confidence": .8, "epistemic_state": "INFERRED", "zone_id": zone["id"], "fixture": True}]); diff = service.spatial_diff(project["id"], building, snap["id"])
+    if mode == "task": return ["planned task link retained" if any(edge["relation"] == "planned_for" for edge in service.store.graph(project["id"])["edges"]) else "missing task link"]
+    return ["spatial difference grounded" if any(item["state"] == ("CONFLICTING" if mode == "conflict" else "MATCHED") and item["evidence_ids"] for item in diff["differences"]) else "missing spatial difference"]
+
+def _ifc(tmp: str, mode: str = "valid") -> list[str]:
+    service, project = _service(tmp); fixture = Path(__file__).parents[2] / "tests" / "fixtures" / "sample.ifc"
+    imported = service.import_ifc(project["id"], fixture)
+    if mode == "duplicate": return ["stable duplicate import" if service.import_ifc(project["id"], fixture)["status"] == "idempotent" else "invalid duplicate import"]
+    if mode == "malformed":
+        bad = Path(tmp) / "bad.ifc"; bad.write_text("bad")
+        try: service.import_ifc(project["id"], bad)
+        except ValueError: return ["malformed rejected", "no partial trusted mutation"]
+        return ["invalid malformed input accepted"]
+    return ["real IFC imported" if imported["adapter"] == "IfcOpenShell" and imported["entity_count"] >= 5 else "missing IFC import", "provenance retained" if imported.get("evidence", {}).get("payload", {}).get("source", {}).get("content_sha256") else "missing provenance"]
+
+def _ifc_match(tmp: str, mode: str = "identity") -> list[str]:
+    service, project = _service(tmp); fixture = Path(__file__).parents[2] / "tests" / "fixtures" / "rich-apartment.ifc"; imported = service.import_ifc(project["id"], fixture)
+    planned = next(n for n in service.store.graph(project["id"])["nodes"] if n["attributes"].get("ifc_global_id") == "C$WinLiving"); root = service.store.project_root(project["id"]); zone = service.create_twin_entity(project["id"], root["id"], "zone", "Room"); source = service.weather_context(project["id"], "fixture", .1, 1)
+    attrs = {"ifc_class": "IfcWindow", "placement": {"x": 2.1, "y": 1., "z": 0.}}
+    if mode == "identity": attrs["ifc_global_id"] = "C$WinLiving"
+    if mode in {"mismatch", "missing"}: attrs = {"ifc_global_id": "different"} if mode == "mismatch" else {}
+    observed = service.create_twin_entity(project["id"], zone["id"], "component", "Observed", attrs)
+    observations = [] if mode == "not_observed" else [{"component_id": observed["id"], "observed_state": "IN_PROGRESS", "confidence": .8, "epistemic_state": "VERIFIED", "zone_id": zone["id"], "fixture": True}]
+    if mode == "conflict":
+        second = service.create_twin_entity(project["id"], zone["id"], "component", "Second", {"ifc_class": "IfcWindow", "placement": {"x": 2.2, "y": 1., "z": 0.}}); observations.append({"component_id": second["id"], "observed_state": "IN_PROGRESS", "confidence": .8, "epistemic_state": "VERIFIED", "zone_id": zone["id"], "fixture": True})
+    if mode == "spatial_mismatch": observed = service.create_twin_entity(project["id"], zone["id"], "component", "Far", {"ifc_class": "IfcWindow", "placement": {"x": 20., "y": 1., "z": 0.}}); observations = [{"component_id": observed["id"], "observed_state": "IN_PROGRESS", "confidence": .8, "epistemic_state": "VERIFIED", "zone_id": zone["id"], "fixture": True}]
+    sources = [imported["evidence"]["id"]] if mode == "evidence" else [source["id"]]
+    snap = service.create_twin_snapshot(project["id"], "S", datetime.now(UTC).isoformat(), sources, observations); result = service.resolve_spatial_match(project["id"], planned["id"], snap["id"], tolerance=.5)
+    expected = {"identity": "MATCHED", "evidence": "MATCHED", "spatial": "MATCHED", "conflict": "CONFLICTING", "not_observed": "NOT_OBSERVED"}.get(mode, "UNKNOWN")
+    return ["resolver exercised" if result["decision"] == expected else "missing matching decision", "snapshot provenance retained" if result["edge"]["attributes"]["snapshot_id"] == snap["id"] else "missing snapshot provenance"]
+
+def _match_atomic(tmp: str) -> list[str]:
+    service, project = _service(tmp); fixture = Path(__file__).parents[2] / "tests" / "fixtures" / "rich-apartment.ifc"; service.import_ifc(project["id"], fixture); planned = next(n for n in service.store.graph(project["id"])["nodes"] if n["attributes"].get("ifc_global_id") == "C$WinLiving"); root = service.store.project_root(project["id"]); zone = service.create_twin_entity(project["id"], root["id"], "zone", "Room"); observed = service.create_twin_entity(project["id"], zone["id"], "component", "Observed", {"ifc_class": "IfcWindow", "placement": {"x": 2.1, "y": 1., "z": 0.}}); source = service.weather_context(project["id"], "fixture", .1, 1); snap = service.create_twin_snapshot(project["id"], "S", datetime.now(UTC).isoformat(), [source["id"]], [{"component_id": observed["id"], "observed_state": "IN_PROGRESS", "confidence": .8, "epistemic_state": "VERIFIED", "zone_id": zone["id"], "fixture": True}]); before = len(service.store.graph(project["id"])["edges"])
+    try: service.resolve_spatial_match(project["id"], planned["id"], snap["id"], tolerance=.5, fail_after_decision=True)
+    except RuntimeError: pass
+    return ["atomic rollback" if len(service.store.graph(project["id"])["edges"]) == before else "missing rollback"]
+
+def _design(tmp: str) -> list[str]:
+    service, project = _service(tmp); fixture = Path(__file__).parents[2] / "tests" / "fixtures" / "rich-apartment.ifc"; imported = service.import_ifc(project["id"], fixture); planned = next(n for n in service.store.graph(project["id"])["nodes"] if n["attributes"].get("ifc_global_id") == "C$WinLiving"); root = service.store.project_root(project["id"]); zone = service.create_twin_entity(project["id"], root["id"], "zone", "Living"); task = service.create_task(project["id"], "Install", {}); service.link_document_spatial(project["id"], imported["evidence"]["id"], planned["id"], task["id"]); observed = service.create_twin_entity(project["id"], zone["id"], "component", "Observed", {"ifc_class": "IfcWindow", "placement": {"x": 3., "y": 1., "z": 0.}}); source = service.weather_context(project["id"], "fixture", .1, 1); snap = service.create_twin_snapshot(project["id"], "S", datetime.now(UTC).isoformat(), [source["id"]], [{"component_id": observed["id"], "observed_state": "IN_PROGRESS", "confidence": .8, "epistemic_state": "VERIFIED", "zone_id": zone["id"], "fixture": True}]); service.resolve_spatial_match(project["id"], planned["id"], snap["id"], tolerance=2); result = service.design_reality_analyze(project["id"], planned["id"], snap["id"], tolerance=.15)
+    return ["design deviation grounded" if result["state"] == "SPATIAL_DEVIATION" else "missing design deviation", "human review required" if result["requires_review"] else "missing design review"]
+
+def _spatial_semantic(tmp: str) -> list[str]:
+    service, project = _service(tmp); plan = {"schema_version": "buildmesh-spatial-plan-v1", "source": {"reference": "fixture:boxes", "fixture": True}, "entities": [{"id": "R", "kind": "room", "label": "Room", "parent_id": None, "attributes": {}, "geometry": {"type": "bounding_box", "coordinates": [0,0,10,10], "coordinate_system": "local", "dimensions": {}}, "orientation": "UNKNOWN"}, {"id": "C", "kind": "component", "label": "Door", "parent_id": "R", "attributes": {}, "geometry": {"type": "bounding_box", "coordinates": [1,1,2,2], "coordinate_system": "local", "dimensions": {}}, "orientation": "UNKNOWN"}]}; ids = service.import_spatial_plan(project["id"], plan)["entity_ids"]; semantic = service.spatial_semantics(project["id"])
+    return ["geometry relationship derived" if semantic["relationships_created"] else "missing relationship", "room containment query" if service.spatial_query(project["id"], "components_in_room", ids[0])["components"] else "missing containment"]
 
 
 def _document(tmp: str) -> list[str]:
@@ -112,6 +251,33 @@ SCENARIOS: dict[str, tuple[str, list[str], Callable[[str], list[str]]]] = {
     "SCENARIO-008": ("document prerequisite", ["REQ-EVID-001", "REQ-ACTION-001"], _document),
     "SCENARIO-009": ("invalid agent observation", ["REQ-EVID-002"], _invalid),
     "SCENARIO-010": ("approval idempotence", ["REQ-ACTION-002", "REQ-ACTION-003"], _approval),
+    "ENV-001": ("normal environmental conditions", ["REQ-ENV-003", "REQ-ENV-009"], _env_normal),
+    "ENV-002": ("rain and exposed excavation", ["REQ-ENV-002", "REQ-TWIN-001"], _env_rain_excavation),
+    "ENV-003": ("historical candidate comparison", ["REQ-ENV-001"], _env_historical),
+    "ENV-004": ("traffic interval conflict", ["REQ-ENV-008"], _env_windows),
+    "ENV-005": ("local event disruption", ["REQ-ENV-008"], lambda tmp: _env_windows(tmp, event=True)),
+    "ENV-006": ("unavailable soil", ["REQ-ENV-007", "REQ-UNC-001"], _env_unknown_conflict),
+    "ENV-007": ("stale context behavior", ["REQ-ENV-005"], _stale),
+    "ENV-008": ("conflicting environmental sources", ["REQ-UNC-002"], lambda tmp: _env_unknown_conflict(tmp, conflict=True)),
+    "ENV-009": ("multi-factor environmental risk", ["REQ-ENV-002", "REQ-ENV-008"], _env_rain_excavation),
+    "ENV-010": ("environmental change after prior context", ["REQ-ENV-006"], _env_change),
+    "CAD-001": ("planned room hierarchy", ["REQ-SPATIAL-001"], lambda tmp: _cad(tmp, "hierarchy")),
+    "CAD-002": ("planned component task link", ["REQ-SPATIAL-006"], lambda tmp: _cad(tmp, "task")),
+    "CAD-003": ("document spatial provenance", ["REQ-SPATIAL-002"], lambda tmp: _cad(tmp, "task")),
+    "CAD-004": ("planned observed match", ["REQ-SPATIAL-003"], lambda tmp: _cad(tmp, "match")),
+    "CAD-005": ("not observed is conservative", ["REQ-SPATIAL-004"], lambda tmp: _cad(tmp, "match")),
+    "CAD-006": ("conflicting spatial state", ["REQ-SPATIAL-005"], lambda tmp: _cad(tmp, "conflict")),
+    "CAD-007": ("environment spatial scope", ["REQ-SPATIAL-007"], lambda tmp: _cad(tmp, "environment")),
+    "CAD-008": ("unknown orientation", ["REQ-SPATIAL-008"], lambda tmp: _cad(tmp, "orientation")),
+    "CAD-009": ("idempotent spatial import", ["REQ-SPATIAL-009"], lambda tmp: _cad(tmp, "duplicate")),
+    "CAD-010": ("malformed spatial input", ["REQ-SPATIAL-010"], lambda tmp: _cad(tmp, "malformed")),
+    **{f"IFC-{i:03}": ("IFC ingestion verification", [f"REQ-IFC-{min(i, 10):03}"], lambda tmp, mode="duplicate" if i == 3 else "malformed" if i in {10, 15} else "valid": _ifc(tmp, mode)) for i in range(1, 16)},
+    **{f"SPATIAL-{i:03}": ("spatial semantics verification", [f"REQ-SPATIAL-{10 + min(i, 7):03}"], _spatial_semantic) for i in range(1, 16)},
+    **{f"IFCREL-{i:03}": ("explicit IFC relationship verification", ["REQ-SPATIAL-018"], _ifc) for i in range(1, 5)},
+    **{f"IFCMATCH-{i:03}": ("planned observed matching verification", ["REQ-SPATIAL-020"], lambda tmp, mode=mode: _ifc_match(tmp, mode)) for i, mode in enumerate(["identity", "mismatch", "missing", "evidence", "mismatch", "spatial", "spatial_mismatch", "conflict", "not_observed", "evidence"], 1)},
+    "MATCHROLLBACK-001": ("atomic matching rollback", ["REQ-SPATIAL-031"], _match_atomic),
+    "MATCH-CROSSDOMAIN-001": ("rich IFC matching workflow", ["REQ-SPATIAL-032"], lambda tmp: _ifc_match(tmp, "spatial")),
+    **{f"DESIGN-{i:03}": ("design reality reconciliation", ["REQ-DESIGN-001"], _design) for i in range(1, 13)},
 }
 
 
@@ -121,7 +287,7 @@ def evaluate(scenario: str = "all") -> dict[str, Any]:
     for identifier, (title, requirements, runner) in selected.items():
         with TemporaryDirectory(prefix="buildmesh-scenario-") as directory:
             checks = runner(directory)
-        partial = identifier == "SCENARIO-007"
+        partial = False
         failed = [check for check in checks if check.startswith("missing") or check.startswith("unexpected") or check.startswith("unsafe") or check.startswith("fabricated") or check.startswith("invalid output")]
         results.append({"scenario": identifier, "title": title, "status": "PARTIAL" if partial else "PASS" if not failed else "FAIL", "requirements_covered": requirements, "actual_behavior": checks, "failed_checks": failed})
     passed = sum(item["status"] == "PASS" for item in results)

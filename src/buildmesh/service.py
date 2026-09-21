@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 from math import ceil
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -11,10 +12,15 @@ from .connectors import ConnectorError, Notifier, OpenMeteoWeatherClient, SMTPNo
 from .hardware import hardware_metadata
 from .inference import PerceptionResult, VisionProvider, device_identity, parse_observations, provider_from_environment
 from .validation import qnn_readiness, validation_state
+from . import twin
+from .environment import historical_windows, normalize, score, solar
+from .spatial import geometric_relationship, geometry_status, planned_nodes, validate_plan
+from .ifc import parse as parse_ifc
+from .design_reality import reconcile as reconcile_design
 from .ingestion import DocumentExtractor, LocalAssetStore
 from .reporting import build_daily_report
 from .storage import Store
-from .types import Evidence, RecommendationStatus, TaskStatus
+from .types import Evidence, Recommendation, RecommendationStatus, Severity, TaskStatus
 
 
 class BuildMeshService:
@@ -37,6 +43,293 @@ class BuildMeshService:
         self.store.add_evidence(Evidence(project_id=project_id, kind="task_state", source="system:task-created", payload={"task_id": task["id"], "previous_status": None, "status": TaskStatus.OPEN.value, "changed_by": "system", "reason": "task created"}, confidence=1.0), related_node_id=task["id"], relation="states")
         self.store.record_event(project_id, "task_created", {"task_node_id": task["id"], "status": TaskStatus.OPEN.value}, task["id"])
         return task
+
+    def create_twin_entity(self, project_id: str, parent_id: str, kind: str, label: str, attributes: dict[str, Any] | None = None) -> dict[str, Any]:
+        return twin.hierarchy(self.store, project_id, parent_id, kind, label, attributes)
+
+    def create_twin_snapshot(self, project_id: str, label: str, captured_at: str, source_evidence_ids: list[str], observations: list[dict[str, Any]]) -> dict[str, Any]:
+        return twin.create_snapshot(self.store, project_id, label, captured_at, source_evidence_ids, observations)
+
+    def link_task_component(self, project_id: str, task_id: str, component_id: str, scope: str = "component") -> dict[str, Any]:
+        """Record an explicit, bounded work-scope assertion; it never infers one from names."""
+        task, component = self.store.get_node(task_id), self.store.get_node(component_id)
+        if task["project_id"] != project_id or task["kind"] != "task":
+            raise ValueError("task_id does not identify a project task")
+        if component["project_id"] != project_id or component["kind"] != "component":
+            raise ValueError("component_id does not identify a project component")
+        if scope not in {"component", "zone", "project"}:
+            raise ValueError("scope must be component, zone, or project")
+        graph = self.store.graph(project_id)
+        existing = next((edge for edge in graph["edges"] if edge["source_id"] == task_id and edge["target_id"] == component_id and edge["relation"] == "affects_component"), None)
+        if existing:
+            return existing
+        edge = self.store.add_edge(project_id, task_id, component_id, "affects_component", {"scope": scope, "assertion": "explicit task scope; no spatial inference"})
+        self.store.record_event(project_id, "task_component_linked", {"task_id": task_id, "component_id": component_id, "scope": scope}, edge["id"])
+        return edge
+
+    def import_spatial_plan(self, project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Import a validated JSON plan atomically enough to avoid malformed trusted graph state."""
+        entities = validate_plan(payload)  # validate all input before mutating the graph
+        graph = self.store.graph(project_id)
+        existing = {node["attributes"].get("spatial_id"): node for node in graph["nodes"] if node["attributes"].get("spatial_id")}
+        if all(item["id"] in existing for item in entities):
+            return {"status": "idempotent", "entity_ids": [existing[item["id"]]["id"] for item in entities], "source": payload["source"]}
+        if any(item["id"] in existing for item in entities):
+            raise ValueError("spatial import partially overlaps an existing plan")
+        evidence = self.store.add_evidence(Evidence(project_id=project_id, kind="spatial_plan", source=f"spatial:{payload['source']['reference']}", payload={"source": payload["source"], "schema_version": payload["schema_version"], "fixture": bool(payload["source"].get("fixture", False))}, confidence=payload["source"].get("confidence")))
+        created: dict[str, dict[str, Any]] = {}
+        for item in entities:
+            kind = "planned_component" if item["kind"] in {"component", "opening"} else f"spatial_{item['kind']}"
+            node = self.store.add_node(project_id, kind, item["label"], {**item["attributes"], "spatial_id": item["id"], "spatial_kind": item["kind"], "orientation": item["orientation"], "geometry": item["geometry"], "planned_state": item["attributes"].get("expected_status", "PLANNED")})
+            created[item["id"]] = node
+            self.store.add_edge(project_id, evidence["graph_node_id"], node["id"], "evidence_for")
+        root = self.store.project_root(project_id)
+        for item in entities:
+            parent = created[item["parent_id"]] if item["parent_id"] else root
+            self.store.add_edge(project_id, created[item["id"]]["id"], parent["id"], "part_of")
+        self.store.record_event(project_id, "spatial_plan_imported", {"source": payload["source"], "entity_count": len(created), "evidence_id": evidence["id"]}, evidence["graph_node_id"])
+        return {"status": "imported", "evidence": evidence, "entity_ids": [created[item["id"]]["id"] for item in entities]}
+
+    def spatial_semantics(self, project_id: str) -> dict[str, Any]:
+        """Derive only bbox-supported relationships; reruns are idempotent."""
+        graph = self.store.graph(project_id); nodes = [n for n in graph["nodes"] if n["kind"].startswith("spatial_") or n["kind"] == "planned_component"]
+        existing = {(e["source_id"], e["target_id"], e["relation"]) for e in graph["edges"]}; derived = []
+        for first in nodes:
+            for second in nodes:
+                if first["id"] == second["id"]: continue
+                relation = geometric_relationship(first["attributes"].get("geometry"), second["attributes"].get("geometry"))
+                if relation and (first["id"], second["id"], relation.lower()) not in existing:
+                    derived.append(self.store.add_edge(project_id, first["id"], second["id"], relation.lower(), {"derivation_method": "GEOMETRIC_CONTAINMENT", "geometry_status": "VERIFIED"}))
+        return {"project_id": project_id, "relationships_created": len(derived), "geometry_normalized_entity_count": sum(geometry_status(n["attributes"].get("geometry")) == "VERIFIED" for n in nodes), "geometry_unavailable_entity_count": sum(geometry_status(n["attributes"].get("geometry")) == "UNAVAILABLE" for n in nodes), "relationships": derived}
+
+    def spatial_query(self, project_id: str, query: str, scope_id: str | None = None, component_type: str | None = None) -> dict[str, Any]:
+        graph = self.store.graph(project_id); nodes = graph["nodes"]; edges = graph["edges"]
+        if query.startswith("ifc-id="):
+            global_id = query.removeprefix("ifc-id=")
+            return {"query": query, "entities": [node for node in nodes if node["attributes"].get("ifc_global_id") == global_id]}
+        if query == "components_in_room":
+            if not scope_id: raise ValueError("scope_id is required")
+            ids = {e["source_id"] for e in edges if e["target_id"] == scope_id and e["relation"] in {"within", "located_in"}}
+            return {"query": query, "scope_id": scope_id, "components": [n for n in nodes if n["id"] in ids]}
+        if query == "components_of_type":
+            return {"query": query, "components": [n for n in nodes if n["kind"] == "planned_component" and n["attributes"].get("ifc_class") == component_type]}
+        if query == "planned_not_observed":
+            linked = {e["source_id"] for e in edges if e["relation"] == "corresponds_to"}
+            return {"query": query, "components": [n for n in nodes if n["kind"] == "planned_component" and n["id"] not in linked], "claim": "not linked to observed counterpart; not physically missing"}
+        raise ValueError("unsupported spatial query")
+
+    def import_ifc(self, project_id: str, path: str | Path) -> dict[str, Any]:
+        """Real IFC → IfcOpenShell → validated normalized plan. Parse/validate precede mutation."""
+        parsed = parse_ifc(path)
+        result = self.import_spatial_plan(project_id, {key: parsed[key] for key in ("schema_version", "source", "entities")})
+        graph = self.store.graph(project_id); by_spatial = {node["attributes"].get("spatial_id"): node for node in graph["nodes"]}
+        existing = {(edge["source_id"], edge["target_id"], edge["relation"]) for edge in graph["edges"]}; extracted = []
+        for relation in parsed["relationships"]:
+            source, target = by_spatial.get(relation["source_spatial_id"]), by_spatial.get(relation["target_spatial_id"])
+            if source and target and (source["id"], target["id"], relation["relation"]) not in existing:
+                extracted.append(self.store.add_edge(project_id, source["id"], target["id"], relation["relation"], {"derivation_method": relation["derivation_method"], "ifc_relation_class": relation["ifc_relation_class"]}))
+        return {**result, "adapter": "IfcOpenShell", "ifc_schema": parsed["source"]["ifc_schema"], "unsupported_entity_classes": parsed["unsupported_entity_classes"], "file_size_bytes": parsed["file_size_bytes"], "entity_count": len(parsed["entities"]), "explicit_relationship_count": len(extracted)}
+
+    def match_planned_observed(self, project_id: str, planned_id: str, observed_id: str, method: str, evidence_ids: list[str], confidence: float | None = None) -> dict[str, Any]:
+        if method not in {"IDENTITY", "EVIDENCE", "SPATIAL", "UNKNOWN"}: raise ValueError("unsupported matching method")
+        planned, observed = self.store.get_node(planned_id), self.store.get_node(observed_id)
+        if planned["project_id"] != project_id or planned["kind"] != "planned_component" or observed["project_id"] != project_id or observed["kind"] != "component": raise ValueError("matching needs project planned and observed components")
+        for evidence_id in evidence_ids:
+            if self.store.get_evidence(evidence_id)["project_id"] != project_id: raise ValueError("matching evidence outside project")
+        graph = self.store.graph(project_id); existing = next((edge for edge in graph["edges"] if edge["source_id"] == planned_id and edge["target_id"] == observed_id and edge["relation"] == "corresponds_to"), None)
+        if existing: return {"status": "idempotent", "edge": existing}
+        decision = "MATCHED" if method != "UNKNOWN" else "UNKNOWN"
+        edge = self.store.add_edge(project_id, planned_id, observed_id, "corresponds_to", {"matching_method": method, "decision": decision, "evidence_ids": evidence_ids, "confidence": confidence, "epistemic_state": "VERIFIED" if method == "IDENTITY" else "NEEDS_REVIEW" if method == "UNKNOWN" else "INFERRED"})
+        if method == "UNKNOWN":
+            self.store.add_recommendation(Recommendation(project_id=project_id, title="Review ambiguous planned-to-observed correspondence", rationale="The supplied evidence does not establish a unique planned-to-observed component match. Review before changing trusted planned or as-built state.", severity=__import__("buildmesh.types", fromlist=["Severity"]).Severity.MEDIUM, evidence_ids=evidence_ids, proposed_task={"title": "Review spatial correspondence", "assignee_role": "site_engineer", "due_within_hours": 24, "requires_human_confirmation": True}))
+        return {"status": "created", "edge": edge}
+
+    def resolve_spatial_match(self, project_id: str, planned_id: str, snapshot_id: str, tolerance: float = 1.0, fail_after_decision: bool = False) -> dict[str, Any]:
+        """Resolve a snapshot-scoped match from identity, then bounded spatial evidence; no caller decision."""
+        planned = self.store.get_node(planned_id)
+        if planned["project_id"] != project_id or planned["kind"] != "planned_component" or tolerance <= 0: raise ValueError("invalid planned component or tolerance")
+        observations = twin.snapshot_observations(self.store, project_id, snapshot_id)
+        snapshot = self.store.get_node(snapshot_id)
+        graph = self.store.graph(project_id)
+        planned_evidence_nodes = [e["source_id"] for e in graph["edges"] if e["target_id"] == planned_id and e["relation"] == "evidence_for"]
+        graph_nodes = {node["id"]: node for node in graph["nodes"]}
+        planned_evidence_ids = [graph_nodes[node_id]["attributes"].get("evidence_id") for node_id in planned_evidence_nodes if graph_nodes[node_id]["attributes"].get("evidence_id")]
+        snapshot_sources = set(snapshot["attributes"].get("source_evidence_ids", []))
+        planned_identity = planned["attributes"].get("ifc_global_id")
+        candidates = []
+        for observation in observations:
+            observed = self.store.get_node(observation["payload"]["component_id"]); identity = observed["attributes"].get("ifc_global_id")
+            method, features = None, {}
+            if planned_identity and identity == planned_identity: method, features = "IDENTITY", {"ifc_global_id": planned_identity}
+            elif snapshot_sources & set(planned_evidence_ids): method, features = "EVIDENCE", {"planned_evidence_ids": sorted(snapshot_sources & set(planned_evidence_ids)), "observation_evidence_id": observation["id"], "snapshot_id": snapshot_id}
+            else:
+                pg, og = planned["attributes"].get("geometry"), observed["attributes"].get("geometry")
+                pp, op = planned["attributes"].get("placement", {}), observed["attributes"].get("placement", {})
+                if planned["attributes"].get("ifc_class") == observed["attributes"].get("ifc_class") and all(isinstance(value, (int, float)) for value in (pp.get("x"), pp.get("y"), op.get("x"), op.get("y"))):
+                    distance = ((float(pp["x"])-float(op["x"]))**2 + (float(pp["y"])-float(op["y"]))**2) ** .5
+                    if distance <= tolerance: method, features = "SPATIAL", {"distance": round(distance, 4), "tolerance": tolerance, "geometry": "IFC placement", "component_type": planned["attributes"].get("ifc_class"), "planned_position": [pp["x"], pp["y"], pp.get("z")], "observed_position": [op["x"], op["y"], op.get("z")]}
+                elif planned["attributes"].get("ifc_class") == observed["attributes"].get("ifc_class") and pg and og and pg.get("type") == og.get("type") == "bounding_box":
+                    a, b = pg["coordinates"], og["coordinates"]; distance = ((float(a[0])-float(b[0]))**2 + (float(a[1])-float(b[1]))**2) ** .5
+                    if distance <= tolerance: method, features = "SPATIAL", {"distance": round(distance, 4), "tolerance": tolerance, "geometry": "bounding_box", "component_type": planned["attributes"].get("ifc_class")}
+            if method: candidates.append({"observed": observed, "observation": observation, "method": method, "features": features})
+        if not observations: decision, method, selected = "NOT_OBSERVED", "UNKNOWN", []
+        elif len(candidates) == 1: decision, method, selected = "MATCHED", candidates[0]["method"], candidates
+        elif len(candidates) > 1: decision, method, selected = "CONFLICTING", candidates[0]["method"], candidates
+        else: decision, method, selected = "UNKNOWN", "UNKNOWN", []
+        existing = [e for e in graph["edges"] if e["source_id"] == planned_id and e["relation"] == "match_decision" and e["attributes"].get("snapshot_id") == snapshot_id]
+        if existing: return {"status": "idempotent", "decision": existing[0]["attributes"].get("decision"), "edge": existing[0]}
+        evidence_ids = [item["observation"]["id"] for item in selected]
+        node_id = selected[0]["observed"]["id"] if len(selected) == 1 else planned_id
+        attrs = {"decision": decision, "matching_method": method, "snapshot_id": snapshot_id, "planned_ifc_global_id": planned_identity, "planned_evidence_ids": planned_evidence_ids, "observation_evidence_ids": evidence_ids, "candidate_component_ids": [item["observed"]["id"] for item in selected], "features": [item["features"] for item in selected], "epistemic_state": "VERIFIED" if method == "IDENTITY" and decision == "MATCHED" else "INFERRED" if method in {"SPATIAL", "EVIDENCE"} and decision == "MATCHED" else "NEEDS_REVIEW"}
+        review = None
+        if decision == "CONFLICTING" and evidence_ids:
+            title = "Review ambiguous planned-to-observed correspondence"
+            if not self.store.has_recommendation_for_evidence(project_id, title, evidence_ids[0]): review = Recommendation(project_id=project_id, title=title, rationale="More than one observed component satisfies the bounded correspondence rule. BuildMesh did not select a winner.", severity=Severity.MEDIUM, evidence_ids=evidence_ids, proposed_task={"title": "Review spatial correspondence", "assignee_role": "site_engineer", "due_within_hours": 24, "requires_human_confirmation": True})
+        persisted = self.store.add_match_decision_atomic(project_id, planned_id, node_id, attrs, review, fail_after_decision)
+        return {"status": "created", "decision": decision, "method": method, **persisted}
+
+    def spatial_status(self, project_id: str) -> dict[str, Any]:
+        graph = self.store.graph(project_id)
+        nodes = [node for node in graph["nodes"] if node["kind"].startswith("spatial_") or node["kind"] == "planned_component"]
+        return {"project_id": project_id, "spatial_entities": [{"id": node["id"], "spatial_id": node["attributes"].get("spatial_id"), "kind": node["attributes"].get("spatial_kind"), "orientation": node["attributes"].get("orientation", "UNKNOWN")} for node in nodes], "count": len(nodes)}
+
+    def link_planned_observed(self, project_id: str, planned_id: str, observed_component_id: str) -> dict[str, Any]:
+        planned, observed = self.store.get_node(planned_id), self.store.get_node(observed_component_id)
+        if planned["project_id"] != project_id or planned["kind"] != "planned_component" or observed["project_id"] != project_id or observed["kind"] != "component":
+            raise ValueError("planned and observed components must be project-scoped components")
+        return self.store.add_edge(project_id, planned_id, observed_component_id, "corresponds_to")
+
+    def spatial_diff(self, project_id: str, planned_scope_id: str, snapshot_id: str) -> dict[str, Any]:
+        graph = self.store.graph(project_id); planned = planned_nodes(graph, planned_scope_id)
+        observations = {item["payload"]["component_id"]: item for item in twin.snapshot_observations(self.store, project_id, snapshot_id)}
+        links = {edge["source_id"]: edge["target_id"] for edge in graph["edges"] if edge["relation"] == "corresponds_to"}
+        differences = []
+        for item in planned:
+            observed_id, observation = links.get(item["id"]), observations.get(links.get(item["id"]))
+            if not observed_id or not observation:
+                differences.append({"planned_component_id": item["id"], "state": "NOT_OBSERVED", "evidence_ids": [], "claim": "absence of linked observation; not MISSING"})
+            elif observation["payload"]["observed_state"] == "CONFLICTING":
+                differences.append({"planned_component_id": item["id"], "observed_component_id": observed_id, "state": "CONFLICTING", "evidence_ids": [observation["id"]]})
+            else:
+                differences.append({"planned_component_id": item["id"], "observed_component_id": observed_id, "state": "MATCHED", "evidence_ids": [observation["id"]]})
+        return {"planned_scope_id": planned_scope_id, "snapshot_id": snapshot_id, "differences": differences, "counts": {state: sum(item["state"] == state for item in differences) for state in {item["state"] for item in differences}}}
+
+    def link_document_spatial(self, project_id: str, evidence_id: str, spatial_id: str, task_id: str | None = None) -> dict[str, Any]:
+        evidence, spatial = self.store.get_evidence(evidence_id), self.store.get_node(spatial_id)
+        if evidence["project_id"] != project_id or spatial["project_id"] != project_id:
+            raise ValueError("document evidence and spatial entity must belong to project")
+        evidence_node = evidence.get("graph_node_id") or self.store.find_graph_node(project_id, "evidence_id", evidence_id)
+        if not evidence_node:
+            raise ValueError("document evidence has no graph node")
+        edge = self.store.add_edge(project_id, evidence_node if isinstance(evidence_node, str) else evidence_node["id"], spatial_id, "evidence_for")
+        if task_id:
+            task = self.store.get_node(task_id)
+            if task["project_id"] != project_id or task["kind"] != "task":
+                raise ValueError("task_id does not identify a project task")
+            self.store.add_edge(project_id, spatial_id, task_id, "planned_for")
+        return edge
+
+    def link_environment_spatial(self, project_id: str, environment_evidence_id: str, spatial_id: str) -> dict[str, Any]:
+        evidence, spatial = self.store.get_evidence(environment_evidence_id), self.store.get_node(spatial_id)
+        if evidence["project_id"] != project_id or evidence["kind"] != "environmental_context" or spatial["project_id"] != project_id:
+            raise ValueError("environment evidence and spatial scope must belong to project")
+        evidence_node = evidence.get("graph_node_id") or self.store.find_graph_node(project_id, "evidence_id", environment_evidence_id)
+        if not evidence_node:
+            raise ValueError("environment evidence has no graph node")
+        return self.store.add_edge(project_id, evidence_node if isinstance(evidence_node, str) else evidence_node["id"], spatial_id, "affects")
+
+    def spatial_analyze(self, project_id: str, scope_id: str) -> dict[str, Any]:
+        node = self.store.get_node(scope_id)
+        if node["project_id"] != project_id:
+            raise ValueError("spatial scope is outside project")
+        graph = self.store.graph(project_id)
+        context_nodes = {edge["source_id"] for edge in graph["edges"] if edge["relation"] == "affects" and edge["target_id"] == scope_id}
+        contexts = [item for item in self.store.evidence(project_id) if (item.get("graph_node_id") or (self.store.find_graph_node(project_id, "evidence_id", item["id"]) or {}).get("id")) in context_nodes]
+        orientation = node["attributes"].get("orientation", "UNKNOWN")
+        contextual = "Orientation is UNKNOWN; no daylight or wind conclusion is made." if orientation == "UNKNOWN" else f"Potentially favorable contextual orientation: {orientation}. This is not engineering-certified performance."
+        return {"scope_id": scope_id, "orientation": orientation, "environment_evidence_ids": [item["id"] for item in contexts], "contextual_note": contextual}
+
+    def architectural_orientation_context(self, project_id: str, spatial_id: str) -> dict[str, Any]:
+        """A bounded orientation + solar observation, not a daylight certification."""
+        scope = self.store.get_node(spatial_id)
+        if scope["project_id"] != project_id:
+            raise ValueError("spatial entity is outside project")
+        graph = self.store.graph(project_id)
+        source_nodes = {edge["source_id"] for edge in graph["edges"] if edge["relation"] == "affects" and edge["target_id"] == spatial_id}
+        evidence_by_node = {
+            (self.store.find_graph_node(project_id, "evidence_id", item["id"]) or {}).get("id"): item
+            for item in self.store.evidence(project_id)
+        }
+        solar = [evidence_by_node[node_id] for node_id in source_nodes if node_id in evidence_by_node and evidence_by_node[node_id]["kind"] == "environmental_context" and evidence_by_node[node_id]["payload"].get("kind") == "solar_context"]
+        orientation = scope["attributes"].get("orientation")
+        if not orientation or not solar:
+            return {"spatial_entity_id": spatial_id, "orientation": orientation or "UNKNOWN", "environment_evidence_ids": [item["id"] for item in solar], "recommendation": None, "epistemic_state": "UNKNOWN", "non_certifying": True}
+        eastward = str(orientation).upper() in {"E", "EAST", "SE", "SOUTHEAST"}
+        return {"spatial_entity_id": spatial_id, "orientation": orientation, "environment_evidence_ids": [item["id"] for item in solar], "recommendation": "Potentially favorable morning-light orientation." if eastward else "Orientation is recorded; no favorable daylight conclusion is made for this bounded solar context.", "epistemic_state": "INFERRED", "non_certifying": True}
+
+    def match_cross_domain_trace(self, project_id: str, planned_id: str, snapshot_id: str) -> dict[str, Any]:
+        """Read persisted lineage only; it does not manufacture links or conclusions."""
+        graph = self.store.graph(project_id)
+        decision = next((edge for edge in graph["edges"] if edge["source_id"] == planned_id and edge["relation"] == "match_decision" and edge["attributes"].get("snapshot_id") == snapshot_id), None)
+        if not decision: raise ValueError("no persisted match decision for planned component and snapshot")
+        task_ids = [edge["target_id"] for edge in graph["edges"] if edge["source_id"] == planned_id and edge["relation"] == "planned_for"]
+        environment = [edge["source_id"] for edge in graph["edges"] if edge["relation"] == "affects" and edge["target_id"] == planned_id]
+        return {"planned_component_id": planned_id, "task_ids": task_ids, "snapshot_id": snapshot_id, "decision_edge_id": decision["id"], "decision": decision["attributes"]["decision"], "planned_evidence_ids": decision["attributes"]["planned_evidence_ids"], "observation_evidence_ids": decision["attributes"]["observation_evidence_ids"], "observed_component_ids": decision["attributes"]["candidate_component_ids"], "environment_evidence_node_ids": environment}
+
+    def design_reality_analyze(self, project_id: str, planned_id: str, snapshot_id: str, tolerance: float = 0.15, fail_after_decision: bool = False) -> dict[str, Any]:
+        graph = self.store.graph(project_id); planned = self.store.get_node(planned_id)
+        match = next((edge["attributes"] for edge in graph["edges"] if edge["source_id"] == planned_id and edge["relation"] == "match_decision" and edge["attributes"].get("snapshot_id") == snapshot_id), None)
+        observed_ids = (match or {}).get("candidate_component_ids", []); observed = self.store.get_node(observed_ids[0]) if len(observed_ids) == 1 else None
+        tasks = [edge["target_id"] for edge in graph["edges"] if edge["source_id"] == planned_id and edge["relation"] == "planned_for"]
+        environment = [edge["source_id"] for edge in graph["edges"] if edge["target_id"] == planned_id and edge["relation"] == "affects"]
+        observation = next((e for e in self.store.evidence(project_id) if e["id"] in (match or {}).get("observation_evidence_ids", [])), None)
+        planned_scope = next((edge["source_id"] for edge in graph["edges"] if edge["target_id"] == planned_id and edge["relation"] == "contains"), None)
+        observed_scope = observed["attributes"].get("planned_scope_id") if observed else None
+        result = reconcile_design(planned, observed, match, tasks, environment, tolerance, planned_scope, observed_scope)
+        existing = next((edge for edge in graph["edges"] if edge["source_id"] == planned_id and edge["relation"] == "design_reconciliation" and edge["attributes"].get("snapshot_id") == snapshot_id), None)
+        if existing: return {"project_id": project_id, "planned_component_id": planned_id, "snapshot_id": snapshot_id, "tolerance": tolerance, "status": "idempotent", **existing["attributes"]}
+        result["trace"]["planned_scope_id"] = planned_scope; result["trace"]["observed_scope_id"] = observed_scope
+        review = None
+        if result["requires_review"] and result["trace"]["evidence_ids"]:
+            title = "Review design-to-reality deviation"
+            if not self.store.has_recommendation_for_evidence(project_id, title, result["trace"]["evidence_ids"][0]):
+                review = Recommendation(project_id=project_id, title=title, rationale="Observed evidence indicates a design-to-reality conflict. Review the installation record; this is not an engineering certification.", severity=Severity.MEDIUM, evidence_ids=result["trace"]["evidence_ids"], proposed_task={"title": "Review design-to-reality deviation", "assignee_role": "site_engineer", "due_within_hours": 24, "requires_human_confirmation": True})
+        record = {"snapshot_id": snapshot_id, "state": result["state"], "deviation": result["deviation"], "evidence_sufficiency": result["evidence_sufficiency"], "requires_review": result["requires_review"], "trace": result["trace"]}
+        persisted = self.store.add_match_decision_atomic(project_id, planned_id, observed["id"] if observed else planned_id, record, review, fail_after_decision, relation="design_reconciliation")
+        return {"project_id": project_id, "planned_component_id": planned_id, "snapshot_id": snapshot_id, "tolerance": tolerance, "status": "created", **result, **persisted}
+
+    def design_reality_timeline(self, project_id: str, planned_id: str) -> dict[str, Any]:
+        """Expose immutable, persisted reconciliation history for one component."""
+        graph = self.store.graph(project_id); planned = self.store.get_node(planned_id)
+        if planned["project_id"] != project_id or planned["kind"] != "planned_component":
+            raise ValueError("planned_id must identify a project planned component")
+        snapshots = {node["id"]: node for node in graph["nodes"] if node["kind"] == "twin_snapshot"}
+        entries = []
+        for edge in graph["edges"]:
+            if edge["source_id"] != planned_id or edge["relation"] != "design_reconciliation": continue
+            attrs, snapshot = edge["attributes"], snapshots.get(edge["attributes"]["snapshot_id"])
+            entries.append({"snapshot_id": attrs["snapshot_id"], "snapshot_label": snapshot["label"] if snapshot else None, "captured_at": (snapshot or {}).get("attributes", {}).get("captured_at"), "decision": attrs["trace"].get("match", {}).get("decision"), "state": attrs["state"], "deviation": attrs["deviation"], "evidence_ids": attrs["trace"].get("evidence_ids", []), "task_ids": attrs["trace"].get("task_ids", []), "review_required": attrs["requires_review"]})
+        return {"project_id": project_id, "planned_component_id": planned_id, "timeline": sorted(entries, key=lambda item: (item["captured_at"] or "", item["snapshot_id"]))}
+
+    def twin_status(self, project_id: str, scope_id: str, snapshot_id: str) -> dict[str, Any]:
+        return twin.completeness(self.store, project_id, scope_id, snapshot_id)
+
+    def twin_diff(self, project_id: str, previous_snapshot_id: str, current_snapshot_id: str) -> list[dict[str, Any]]:
+        return twin.twin_diff(self.store, project_id, previous_snapshot_id, current_snapshot_id)
+
+    def twin_reconcile(self, project_id: str, snapshot_id: str) -> list[dict[str, Any]]:
+        """Bounded reconciliation: conflicting observed state requests review; it never overwrites plans."""
+        findings = []
+        for observation in twin.snapshot_observations(self.store, project_id, snapshot_id):
+            if observation["payload"]["observed_state"] != "CONFLICTING":
+                continue
+            component = self.store.get_node(observation["payload"]["component_id"])
+            title = f"Review conflicting as-built state for {component['label']}"
+            if self.store.has_recommendation_for_evidence(project_id, title, observation["id"]):
+                continue
+            from .types import Recommendation, Severity
+            findings.append(self.store.add_recommendation(Recommendation(project_id=project_id, title=title, rationale="Observed as-built state is conflicting. Review its source evidence and planned state before recording a project change; BuildMesh has not resolved the conflict.", severity=Severity.HIGH, evidence_ids=[observation["id"]], proposed_task={"title": f"Verify as-built state: {component['label']}", "assignee_role": "site_engineer", "due_within_hours": 24, "requires_human_confirmation": True})))
+        return findings
 
     def add_project_member(self, project_id: str, name: str, email: str, roles: list[str]) -> dict[str, Any]:
         if not isinstance(name, str) or not 2 <= len(name.strip()) <= 160:
@@ -166,6 +459,91 @@ class BuildMeshService:
         if confidence is not None and not 0 <= confidence <= 1:
             raise ValueError("confidence must be between 0 and 1")
         return self.store.add_evidence(Evidence(project_id=project_id, kind=kind, source=source, payload=payload, confidence=confidence))
+
+    def environmental_context(self, project_id: str, **context: Any) -> dict[str, Any]:
+        payload = normalize(**context)
+        location_key = f"{payload['geographic_scope']['latitude']:.6f},{payload['geographic_scope']['longitude']:.6f}"
+        location = self.store.find_graph_node(project_id, "location_key", location_key)
+        if not location:
+            location = self.store.add_node(project_id, "location_context", f"Location {location_key}", {"location_key": location_key, **payload["geographic_scope"]})
+            self.store.add_edge(project_id, self.store.project_root(project_id)["id"], location["id"], "contains")
+        evidence = self.store.add_evidence(Evidence(project_id=project_id, kind="environmental_context", source=payload["source"], payload=payload, confidence=payload["confidence"]))
+        self.store.add_edge(project_id, location["id"], evidence["graph_node_id"], "observed_at")
+        return evidence
+
+    def refresh_environment(self, project_id: str, horizon_hours: int = 48) -> dict[str, Any]:
+        """Normalize live weather provider output; missing fields remain absent, never invented."""
+        project = self.store.get_project(project_id)
+        metadata = project["metadata"]
+        if "latitude" not in metadata or "longitude" not in metadata:
+            raise ValueError("project metadata must include latitude and longitude")
+        raw = self.weather.forecast(float(metadata["latitude"]), float(metadata["longitude"]), horizon_hours)
+        required = {"provider", "retrieved_at", "latitude", "longitude", "rain_probability", "peak_at", "precipitation_total_mm"}
+        if not required <= set(raw):
+            raise ConnectorError("weather provider response is incomplete for environmental normalization")
+        return self.environmental_context(project_id, kind="weather_forecast", source=f"weather:{raw['provider']}", source_type="live", retrieved_at=raw["retrieved_at"], observed_at=raw["peak_at"], latitude=float(raw["latitude"]), longitude=float(raw["longitude"]), values={"rain_probability": float(raw["rain_probability"]), "precipitation_mm": float(raw["precipitation_total_mm"])}, units={"rain_probability": "probability", "precipitation_mm": "mm"}, confidence=0.65, valid_until=None)
+
+    def unknown_environment(self, project_id: str, kind: str, latitude: float, longitude: float, reason: str) -> dict[str, Any]:
+        return self.environmental_context(project_id, kind=kind, source="system:unavailable", source_type="manual", retrieved_at=datetime.now().astimezone().isoformat(), observed_at=datetime.now().astimezone().isoformat(), latitude=latitude, longitude=longitude, values={"summary": reason}, units={}, epistemic_state="UNKNOWN", confidence=None)
+
+    def reconcile_environment(self, project_id: str) -> list[dict[str, Any]]:
+        contexts = [item for item in self.store.evidence(project_id) if item["kind"] == "environmental_context"]
+        base_evidence_ids = [item["id"] for item in contexts if item["payload"]["kind"] not in {"traffic_context", "local_event"}]
+        created = []
+        forecasts = [item for item in contexts if item["payload"]["kind"] == "weather_forecast"]
+        observations = [item for item in contexts if item["payload"]["kind"] == "weather_observation"]
+        for forecast in forecasts:
+            for observed in observations:
+                low = forecast["payload"]["values"].get("rain_probability", 1) < 0.2
+                active = observed["payload"]["values"].get("precipitation_mm", 0) > 0
+                if not (low and active):
+                    continue
+                source_ids = sorted([forecast["id"], observed["id"]])
+                if any(item["kind"] == "environmental_conflict" and item["payload"].get("evidence_ids") == source_ids for item in self.store.evidence(project_id)):
+                    continue
+                conflict = self.store.add_evidence(Evidence(project_id=project_id, kind="environmental_conflict", source="system:environment-reconciliation", payload={"epistemic_state": "CONFLICTING", "evidence_ids": source_ids, "reason": "low precipitation forecast conflicts with active observed precipitation"}, confidence=None))
+                created.append(conflict)
+        return created
+
+    def environment_status(self, project_id: str) -> dict[str, Any]:
+        contexts = [item for item in self.store.evidence(project_id) if item["kind"] == "environmental_context"]
+        return {"project_id": project_id, "contexts": [{"id": item["id"], "kind": item["payload"]["kind"], "source": item["payload"]["source"], "source_type": item["payload"]["source_type"], "epistemic_state": item["payload"]["epistemic_state"], "freshness": item["payload"]["freshness"]} for item in contexts], "live_count": sum(item["payload"]["source_type"] == "live" for item in contexts), "fixture_count": sum(item["payload"]["fixture"] for item in contexts)}
+
+    def environment_plan(self, project_id: str, task_id: str) -> dict[str, Any]:
+        task = self.store.get_node(task_id)
+        if task["project_id"] != project_id or task["kind"] != "task":
+            raise ValueError("task_id does not identify a project task")
+        activity = task["attributes"].get("activity", "excavation")
+        contexts = [item for item in self.store.evidence(project_id) if item["kind"] == "environmental_context"]
+        return {"task_id": task_id, "task": task["label"], "affected_task": task_id, "environmental_score": score(activity, contexts), "evidence_ids": [item["id"] for item in contexts]}
+
+    def environmental_solar(self, project_id: str, latitude: float, longitude: float, for_date: str) -> dict[str, Any]:
+        values = solar(latitude, longitude, for_date)
+        return self.environmental_context(project_id, kind="solar_context", source="calculated:solar-geometry", source_type="calculated", retrieved_at=f"{for_date}T00:00:00+00:00", observed_at=f"{for_date}T00:00:00+00:00", latitude=latitude, longitude=longitude, values=values, units={"daylight_hours": "hours"}, epistemic_state="INFERRED", confidence=0.7)
+
+    def historical_climate_plan(self, project_id: str, candidates: list[dict[str, Any]]) -> dict[str, Any]:
+        comparison = historical_windows(candidates)
+        evidence = self.store.add_evidence(Evidence(project_id=project_id, kind="historical_climate_plan", source="historical:provided", payload={"classification": "HISTORICAL_NOT_FORECAST", "candidates": comparison}, confidence=None))
+        return {"evidence": evidence, "candidates": comparison}
+
+    def candidate_work_windows(self, project_id: str, task_id: str, windows: list[dict[str, Any]]) -> dict[str, Any]:
+        plan = self.environment_plan(project_id, task_id)
+        if not isinstance(windows, list) or not windows:
+            raise ValueError("work windows are required")
+        contexts = [item for item in self.store.evidence(project_id) if item["kind"] == "environmental_context"]
+        base_evidence_ids = [item["id"] for item in contexts if item["payload"]["kind"] not in {"traffic_context", "local_event"}]
+        ranked = []
+        for item in windows:
+            if not isinstance(item, dict) or set(item) != {"start", "end"} or not all(isinstance(item[key], str) and item[key] for key in item):
+                raise ValueError("work window must contain start and end")
+            traffic = [context for context in contexts if context["payload"]["kind"] == "traffic_context" and context["payload"]["values"].get("window_start") == item["start"] and context["payload"]["values"].get("window_end") == item["end"]]
+            events = [context for context in contexts if context["payload"]["kind"] == "local_event" and context["payload"]["values"].get("window_start") == item["start"]]
+            traffic_risk = max((context["payload"]["values"].get("congestion_index", 0) for context in traffic), default=None)
+            event_risk = max((context["payload"]["values"].get("disruption_level", 0) for context in events), default=None)
+            penalty = (30 * traffic_risk if traffic_risk is not None else 0) + (25 * event_risk if event_risk is not None else 0)
+            matched_ids = [context["id"] for context in [*traffic, *events]]
+            ranked.append({**item, "score": round(max(0, (plan["environmental_score"]["suitability_score"] or 0) - penalty), 1) if plan["environmental_score"]["suitability_score"] is not None else None, "evidence_ids": [*base_evidence_ids, *matched_ids], "factors": [*plan["environmental_score"]["factors"], {"factor": "traffic", "value": traffic_risk, "evidence_ids": [context["id"] for context in traffic], "effect": "risk" if traffic_risk and traffic_risk >= .6 else "unknown" if traffic_risk is None else "neutral"}, {"factor": "local_event", "value": event_risk, "evidence_ids": [context["id"] for context in events], "effect": "risk" if event_risk and event_risk >= .5 else "unknown" if event_risk is None else "neutral"}], "assumptions": ["traffic/event values apply only when their exact fixture or sourced interval matches candidate window"]})
+        return {"task_id": task_id, "ranked_windows": ranked, "formula": "current environmental suitability score; no predicted time-of-day variation", "evidence_ids": plan["evidence_ids"]}
 
     def traffic_context(self, project_id: str, source: str, windows: list[dict[str, Any]], confidence: float, observed_at: str) -> dict[str, Any]:
         if not isinstance(source, str) or not source.strip():

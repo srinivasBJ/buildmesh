@@ -1,4 +1,299 @@
 requirements:
+  - id: REQ-DESIGN-001
+    title: Planned and observed state can be compared
+    status: IMPLEMENTED
+    implementation: src/buildmesh/design_reality.py:reconcile
+    verification: tests/test_ifc.py::test_design_reality_computes_deviation_type_conflict_and_not_observed; DESIGN-001
+  - id: REQ-DESIGN-002
+    title: Spatial deviation requires spatial evidence
+    status: IMPLEMENTED
+    implementation: src/buildmesh/design_reality.py:reconcile
+    verification: tests/test_ifc.py::test_design_reality_computes_deviation_type_conflict_and_not_observed; DESIGN-002
+  - id: REQ-DESIGN-003
+    title: Type conflicts are explicit
+    status: IMPLEMENTED
+    implementation: src/buildmesh/design_reality.py:reconcile
+    verification: DESIGN-003
+  - id: REQ-DESIGN-004
+    title: Scope conflicts are explicit
+    status: IMPLEMENTED
+    implementation: src/buildmesh/design_reality.py:reconcile
+    verification: tests/test_ifc.py::test_design_reality_scope_conflict_is_explicit
+  - id: REQ-DESIGN-005
+    title: Recommendations retain evidence provenance
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:design_reality_analyze
+    verification: tests/test_ifc.py::test_design_reality_computes_deviation_type_conflict_and_not_observed
+  - id: REQ-DESIGN-006
+    title: Task impact is bounded and explicit
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:design_reality_analyze
+    verification: tests/test_ifc.py::test_design_reality_computes_deviation_type_conflict_and_not_observed
+  - id: REQ-DESIGN-007
+    title: Environment can inform spatial reasoning
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:architectural_orientation_context
+    verification: tests/test_ifc.py::test_orientation_context_retains_solar_evidence
+  - id: REQ-DESIGN-008
+    title: Insufficient evidence remains unknown
+    status: IMPLEMENTED
+    implementation: src/buildmesh/design_reality.py:reconcile
+    verification: DESIGN-006
+  - id: REQ-DESIGN-009
+    title: Analysis is idempotent
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:design_reality_analyze
+    verification: tests/test_ifc.py::test_design_reality_computes_deviation_type_conflict_and_not_observed
+  - id: REQ-DESIGN-011
+    title: Room/scope conflicts are explicit
+    status: IMPLEMENTED
+    implementation: src/buildmesh/design_reality.py:reconcile
+    verification: tests/test_ifc.py::test_design_reality_scope_conflict_is_explicit
+  - id: REQ-DESIGN-012
+    title: Repeated analysis is persisted-idempotently
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:design_reality_analyze
+    verification: tests/test_ifc.py::test_design_reality_computes_deviation_type_conflict_and_not_observed
+  - id: REQ-DESIGN-013
+    title: DesignRealityAgent remains behind the orchestration boundary
+    status: IMPLEMENTED
+    implementation: src/buildmesh/agents.py:DesignRealityAgent
+    verification: tests/test_ifc.py::test_design_reality_computes_deviation_type_conflict_and_not_observed
+  - id: REQ-DESIGN-014
+    title: Reconciliation history is snapshot-scoped and immutable
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:design_reality_timeline
+    verification: tests/test_ifc.py::test_design_reality_rollback_and_persisted_timeline
+  - id: REQ-DESIGN-015
+    title: Environmental architectural reasoning retains evidence provenance
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:architectural_orientation_context
+    verification: tests/test_ifc.py::test_orientation_context_retains_solar_evidence
+  - id: REQ-DESIGN-016
+    title: Spatial deviations link affected tasks
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:design_reality_analyze
+    verification: tests/test_ifc.py::test_design_reality_computes_deviation_type_conflict_and_not_observed
+  - id: REQ-DESIGN-017
+    title: Design-reality writes roll back atomically
+    status: IMPLEMENTED
+    implementation: src/buildmesh/storage.py:add_match_decision_atomic
+    verification: tests/test_ifc.py::test_design_reality_rollback_and_persisted_timeline
+  - id: REQ-DESIGN-010
+    title: Consequential recommendations require approval
+    status: IMPLEMENTED
+    implementation: src/buildmesh/storage.py:review_recommendation
+    verification: tests/test_workflow.py::test_recommendation_requires_review_and_creates_task_after_approval
+  - id: REQ-SPATIAL-031
+    title: Matching and mandatory review materialization are atomic
+    status: IMPLEMENTED
+    implementation: src/buildmesh/storage.py:add_match_decision_atomic
+    verification: tests/test_ifc.py::test_match_conflict_rolls_back_and_rich_cross_domain_trace_is_persisted; MATCHROLLBACK-001
+  - id: REQ-SPATIAL-032
+    title: Rich IFC workflow links planned component, task, observed snapshot, and context
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:match_cross_domain_trace
+    verification: tests/test_ifc.py::test_match_conflict_rolls_back_and_rich_cross_domain_trace_is_persisted; MATCH-CROSSDOMAIN-001
+  - id: REQ-SPATIAL-018
+    title: Explicit IFC relationships retain provenance
+    status: IMPLEMENTED
+    implementation: src/buildmesh/ifc.py:parse
+    verification: tests/test_ifc.py::test_real_ifc_openshell_import_is_provenanced_and_idempotent; IFCREL-001
+  - id: REQ-SPATIAL-019
+    title: Relationship derivation method is recorded
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:import_ifc
+    verification: tests/test_ifc.py::test_real_ifc_openshell_import_is_provenanced_and_idempotent; IFCREL-003
+  - id: REQ-SPATIAL-020
+    title: Planned observed matching records method
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:match_planned_observed
+    verification: tests/test_ifc.py::test_matching_decision_is_provenanced_and_idempotent; IFCMATCH-001
+  - id: REQ-SPATIAL-021
+    title: Ambiguous correspondence does not silently match
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:match_planned_observed
+    verification: IFCMATCH-004; IFCMATCH-005
+  - id: REQ-SPATIAL-022
+    title: Not observed remains distinct from missing
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:spatial_diff
+    verification: IFCMATCH-006
+  - id: REQ-SPATIAL-023
+    title: Correspondence is traceable to planned and observed evidence
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:match_planned_observed
+    verification: tests/test_ifc.py::test_matching_decision_is_provenanced_and_idempotent
+  - id: REQ-SPATIAL-024
+    title: Ambiguous consequential correspondence requires review
+    status: IMPLEMENTED
+  - id: REQ-SPATIAL-026
+    title: Exact IFC relationship targets are validated
+    status: IMPLEMENTED
+    implementation: src/buildmesh/ifc.py:parse; src/buildmesh/service.py:import_ifc
+    verification: tests/test_ifc.py::test_rich_fixture_exact_relationships_and_real_spatial_evidence_matching
+  - id: REQ-SPATIAL-027
+    title: Spatial matching uses actual spatial evidence
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:resolve_spatial_match
+    verification: tests/test_ifc.py::test_rich_fixture_exact_relationships_and_real_spatial_evidence_matching
+  - id: REQ-SPATIAL-028
+    title: Matching decision is distinct from method
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:resolve_spatial_match
+    verification: tests/test_ifc.py::test_rich_ifc_mutations_and_spatial_conflict_change_production_results
+  - id: REQ-SPATIAL-029
+    title: Matching belongs to a specific twin snapshot
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:resolve_spatial_match
+    verification: tests/test_ifc.py::test_resolver_uses_real_identity_snapshot_and_detects_spatial_ambiguity
+  - id: REQ-SPATIAL-030
+    title: Source mutation changes import or matching behavior
+    status: IMPLEMENTED
+    implementation: src/buildmesh/ifc.py:parse; src/buildmesh/service.py:resolve_spatial_match
+    verification: tests/test_ifc.py::test_rich_ifc_mutations_and_spatial_conflict_change_production_results
+    implementation: src/buildmesh/service.py:match_planned_observed
+    verification: IFCMATCH-005
+  - id: REQ-SPATIAL-025
+    title: Duplicate matching is idempotent
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:match_planned_observed
+    verification: tests/test_ifc.py::test_matching_decision_is_provenanced_and_idempotent; IFCMATCH-007
+  - id: REQ-SPATIAL-011
+    title: Supported geometry has explicit status
+    status: IMPLEMENTED
+    implementation: src/buildmesh/spatial.py:geometry_status
+    verification: tests/test_spatial.py::test_bbox_semantics_are_conservative_and_queryable; SPATIAL-001
+  - id: REQ-SPATIAL-012
+    title: Relationships retain derivation provenance
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:spatial_semantics
+    verification: tests/test_spatial.py::test_bbox_semantics_are_conservative_and_queryable; SPATIAL-003
+  - id: REQ-SPATIAL-013
+    title: Containment needs sufficient evidence
+    status: IMPLEMENTED
+    implementation: src/buildmesh/spatial.py:geometric_relationship
+    verification: tests/test_spatial.py::test_bbox_semantics_are_conservative_and_queryable; SPATIAL-002
+  - id: REQ-SPATIAL-014
+    title: Unsupported orientation remains unknown
+    status: IMPLEMENTED
+    implementation: src/buildmesh/ifc.py:parse
+    verification: SPATIAL-006
+  - id: REQ-SPATIAL-015
+    title: Spatial reasoning cites affected scope
+    status: PARTIAL
+    implementation: src/buildmesh/service.py:spatial_analyze
+    verification: SPATIAL-007
+  - id: REQ-SPATIAL-016
+    title: Planned observed matching records method
+    status: PARTIAL
+    implementation: src/buildmesh/service.py:spatial_diff
+    verification: SPATIAL-009
+  - id: REQ-SPATIAL-017
+    title: Unsupported geometry does not become valid geometry
+    status: IMPLEMENTED
+    implementation: src/buildmesh/spatial.py:geometry_status
+    verification: SPATIAL-005
+  - id: REQ-IFC-001
+    title: Real IFC ingestion path
+    status: IMPLEMENTED
+    implementation: src/buildmesh/ifc.py:parse
+    verification: tests/test_ifc.py::test_real_ifc_openshell_import_is_provenanced_and_idempotent; IFC-001
+  - id: REQ-IFC-002
+    title: Original IFC identity retained
+    status: IMPLEMENTED
+    implementation: src/buildmesh/ifc.py:parse
+    verification: tests/test_ifc.py::test_real_ifc_openshell_import_is_provenanced_and_idempotent; IFC-002
+  - id: REQ-IFC-003
+    title: Imported entities preserve evidence provenance
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:import_ifc
+    verification: tests/test_ifc.py::test_real_ifc_openshell_import_is_provenanced_and_idempotent; IFC-006
+  - id: REQ-IFC-004
+    title: Import is idempotent
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:import_spatial_plan
+    verification: tests/test_ifc.py::test_real_ifc_openshell_import_is_provenanced_and_idempotent; IFC-003
+  - id: REQ-IFC-005
+    title: Malformed IFC cannot mutate trusted graph state
+    status: IMPLEMENTED
+    implementation: src/buildmesh/ifc.py:parse
+    verification: tests/test_ifc.py::test_malformed_ifc_never_mutates_graph; IFC-010; IFC-015
+  - id: REQ-IFC-006
+    title: Unsupported geometry/entity types remain explicit
+    status: PARTIAL
+    implementation: src/buildmesh/ifc.py:parse
+    verification: IFC-011
+  - id: REQ-IFC-007
+    title: IFC represents planned project state
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:import_ifc
+    verification: tests/test_ifc.py::test_real_ifc_openshell_import_is_provenanced_and_idempotent
+  - id: REQ-IFC-008
+    title: Planned entities can correspond to observed twin entities
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:link_planned_observed
+    verification: tests/test_spatial.py::test_spatial_diff_document_and_environment_links_are_explicit; IFC-007
+  - id: REQ-IFC-009
+    title: Spatial relationships are explicit and evidence-grounded
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:import_spatial_plan
+    verification: tests/test_spatial.py::test_spatial_diff_document_and_environment_links_are_explicit
+  - id: REQ-IFC-010
+    title: Unknown spatial properties remain UNKNOWN
+    status: IMPLEMENTED
+    implementation: src/buildmesh/ifc.py:parse
+    verification: IFC-012
+  - id: REQ-SPATIAL-001
+    title: Project-scoped spatial hierarchy
+    status: IMPLEMENTED
+    implementation: src/buildmesh/spatial.py:validate_plan
+    verification: tests/test_spatial.py::test_spatial_import_hierarchy_provenance_and_idempotence; CAD-001
+  - id: REQ-SPATIAL-002
+    title: Planned state provenance
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:import_spatial_plan
+    verification: tests/test_spatial.py::test_spatial_import_hierarchy_provenance_and_idempotence; CAD-003
+  - id: REQ-SPATIAL-003
+    title: Observed state provenance
+    status: IMPLEMENTED
+    implementation: src/buildmesh/twin.py:create_snapshot
+    verification: tests/test_spatial.py::test_spatial_diff_document_and_environment_links_are_explicit; CAD-004
+  - id: REQ-SPATIAL-004
+    title: Observation absence is conservative
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:spatial_diff
+    verification: tests/test_spatial.py::test_spatial_diff_document_and_environment_links_are_explicit; CAD-005
+  - id: REQ-SPATIAL-005
+    title: Spatial differences retain evidence
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:spatial_diff
+    verification: tests/test_spatial.py::test_spatial_diff_document_and_environment_links_are_explicit; CAD-006
+  - id: REQ-SPATIAL-006
+    title: Spatial-task relationships are explicit
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:link_document_spatial
+    verification: tests/test_spatial.py::test_spatial_diff_document_and_environment_links_are_explicit; CAD-002
+  - id: REQ-SPATIAL-007
+    title: Environmental context can reference spatial scope
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:link_environment_spatial
+    verification: tests/test_spatial.py::test_spatial_diff_document_and_environment_links_are_explicit; CAD-007
+  - id: REQ-SPATIAL-008
+    title: Unknown orientation remains unknown
+    status: IMPLEMENTED
+    implementation: src/buildmesh/spatial.py:validate_plan
+    verification: tests/test_spatial.py::test_spatial_import_hierarchy_provenance_and_idempotence; CAD-008
+  - id: REQ-SPATIAL-009
+    title: Spatial imports are idempotent
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:import_spatial_plan
+    verification: tests/test_spatial.py::test_spatial_import_hierarchy_provenance_and_idempotence; CAD-009
+  - id: REQ-SPATIAL-010
+    title: Malformed spatial input cannot mutate trusted graph state
+    status: IMPLEMENTED
+    implementation: src/buildmesh/spatial.py:validate_plan
+    verification: tests/test_spatial.py::test_spatial_import_hierarchy_provenance_and_idempotence; CAD-010
   - id: REQ-PROJ-001
     title: Persistent project state
     description: Every project has a persistent graph root and scoped nodes.
@@ -84,25 +379,25 @@ requirements:
     title: Forecast and historical separation
     description: Future climate planning must remain distinct from forecast evidence.
     priority: medium
-    status: PLANNED
+    status: PARTIAL
     source: roadmap
-    implementation: unknown
-    verification: future scenario
-    marker: future
+    implementation: src/buildmesh/service.py:historical_climate_plan
+    verification: tests/test_environment.py::test_historical_solar_and_work_window_outputs_are_explicit_about_limits
+    marker: manual aggregate only
   - id: REQ-ENV-002
     title: Environmental task linkage
     description: Environmental recommendations must identify affected tasks and evidence.
     priority: medium
-    status: PARTIAL
+    status: IMPLEMENTED
     source: product-thesis
-    implementation: src/buildmesh/agents.py:RiskAgent
-    verification: tests/scenarios/SCENARIO-004.json
-    marker: weather-only
+    implementation: src/buildmesh/agents.py:ContextFusionAgent
+    verification: tests/test_environment.py::test_fusion_cites_as_built_observation_with_environment_and_dependency; ENV-002; ENV-009
+    marker: implemented
   - id: REQ-UNC-001
     title: Explicit unknowns
     description: Missing information remains UNKNOWN rather than being inferred as fact.
     priority: high
-    status: PARTIAL
+    status: IMPLEMENTED
     source: uncertainty-model
     implementation: src/buildmesh/validation.py
     verification: tests/test_live_integrations.py::test_backend_selection_is_explicit_and_unknown_device_is_not_claimed
@@ -111,11 +406,11 @@ requirements:
     title: Conflicting evidence safety
     description: Contradictions must require review rather than silently resolve.
     priority: high
-    status: PARTIAL
+    status: IMPLEMENTED
     source: uncertainty-model
-    implementation: src/buildmesh/agents.py:ProjectStateAgent
-    verification: tests/scenarios/SCENARIO-006.json
-    marker: partial
+    implementation: src/buildmesh/service.py:reconcile_environment; src/buildmesh/agents.py:ContextFusionAgent
+    verification: tests/test_environment.py::test_live_refresh_conflict_unknown_and_window_specific_traffic; ENV-008
+    marker: implemented
   - id: REQ-CAD-001
     title: CAD/BIM geometry provenance
     description: Future geometry claims must retain source geometry provenance.
@@ -125,3 +420,93 @@ requirements:
     implementation: unknown
     verification: future scenario
     marker: future
+  - id: REQ-TWIN-001
+    title: As-built provenance
+    description: Twin snapshots and observed component state retain source evidence.
+    priority: high
+    status: IMPLEMENTED
+    source: product-thesis
+    implementation: src/buildmesh/twin.py:create_snapshot
+    verification: tests/test_twin.py::test_twin_snapshots_have_provenance_diff_and_completeness
+    marker: implemented
+  - id: REQ-TWIN-002
+    title: Conservative temporal change
+    description: Missing current observation must not be interpreted as removal.
+    priority: high
+    status: IMPLEMENTED
+    source: evidence-policy
+    implementation: src/buildmesh/twin.py:twin_diff
+    verification: tests/test_twin.py::test_twin_snapshots_have_provenance_diff_and_completeness
+    marker: implemented
+  - id: REQ-TWIN-003
+    title: As-built conflict review
+    description: Conflicting observed state produces a review recommendation and never overwrites plan.
+    priority: high
+    status: IMPLEMENTED
+    source: uncertainty-model
+    implementation: src/buildmesh/service.py:twin_reconcile
+    verification: tests/test_twin.py::test_twin_reconciliation_and_validation
+    marker: implemented
+  - id: REQ-ENV-003
+    title: Environmental provenance
+    description: Environmental context retains source, timestamps, units, and geographic scope.
+    priority: high
+    status: IMPLEMENTED
+    source: phase-4
+    implementation: src/buildmesh/environment.py:normalize
+    verification: tests/test_environment.py::test_environmental_context_has_graph_provenance_and_fixture_discipline
+    marker: implemented
+  - id: REQ-ENV-004
+    title: Context type separation
+    description: Historical, forecast, observation, and fixture context remain distinct.
+    priority: high
+    status: IMPLEMENTED
+    source: phase-4
+    implementation: src/buildmesh/environment.py:normalize
+    verification: tests/test_environment.py::test_environmental_context_has_graph_provenance_and_fixture_discipline
+    marker: implemented
+  - id: REQ-ENV-005
+    title: Stale context safety
+    description: Stale context is explicit and cannot silently act as current truth.
+    priority: high
+    status: IMPLEMENTED
+    source: phase-4
+    implementation: src/buildmesh/environment.py:normalize
+    verification: tests/test_environment.py::test_stale_context_is_explicit_and_multifactor_fusion_requires_review
+    marker: implemented
+  - id: REQ-ENV-006
+    title: Environmental project relevance
+    description: Environmental recommendations identify affected task and project evidence.
+    priority: high
+    status: IMPLEMENTED
+    source: phase-4
+    implementation: src/buildmesh/agents.py:ContextFusionAgent
+    verification: tests/test_environment.py::test_stale_context_is_explicit_and_multifactor_fusion_requires_review
+    marker: implemented
+  - id: REQ-ENV-007
+    title: Unknown soil safety
+    description: Unavailable soil type remains UNKNOWN and is never geographically inferred.
+    priority: high
+    status: IMPLEMENTED
+    source: phase-4
+    implementation: src/buildmesh/service.py:unknown_environment; src/buildmesh/agents.py:ContextFusionAgent
+    verification: tests/test_environment.py::test_live_refresh_conflict_unknown_and_window_specific_traffic; ENV-006
+    marker: implemented
+  - id: REQ-ENV-008
+    title: Explainable environmental factors
+    description: Environmental recommendations expose contributing factors and assumptions.
+    priority: high
+    status: IMPLEMENTED
+    source: phase-4
+    implementation: src/buildmesh/environment.py:score
+    verification: tests/test_environment.py::test_stale_context_is_explicit_and_multifactor_fusion_requires_review
+    marker: implemented
+  - id: REQ-ENV-009
+    title: Fixture source discipline
+    description: Fixture context cannot be represented as live context.
+    priority: high
+    status: IMPLEMENTED
+    source: phase-4
+    implementation: src/buildmesh/environment.py:normalize
+    verification: tests/test_environment.py::test_environmental_context_has_graph_provenance_and_fixture_discipline
+    marker: implemented

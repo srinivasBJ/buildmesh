@@ -44,6 +44,11 @@ class TaskDependencyIn(BaseModel):
     prerequisite_task_id: str
 
 
+class TaskComponentLinkIn(BaseModel):
+    component_id: str
+    scope: str = "component"
+
+
 class TaskStatusIn(BaseModel):
     status: Literal["open", "in_progress", "blocked", "completed"]
     changed_by: str = Field(min_length=2, max_length=160)
@@ -87,6 +92,53 @@ class BenchmarkIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     repetitions: int = Field(default=8, ge=3, le=100)
+
+
+class TwinEntityIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    parent_id: str
+    kind: Literal["site", "building", "floor", "zone", "component"]
+    label: str = Field(min_length=1, max_length=240)
+    attributes: dict[str, Any] = Field(default_factory=dict)
+
+
+class TwinSnapshotIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    label: str = Field(min_length=1, max_length=240)
+    captured_at: str = Field(min_length=10, max_length=80)
+    source_evidence_ids: list[str] = Field(min_length=1)
+    observations: list[dict[str, Any]] = Field(min_length=1)
+
+
+class EnvironmentalContextIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["weather_observation", "weather_forecast", "historical_climate", "solar_context", "wind_context", "traffic_context", "local_event", "terrain_context", "soil_context"]
+    source: str
+    source_type: Literal["live", "fixture", "manual", "calculated", "historical"]
+    retrieved_at: str
+    observed_at: str
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    values: dict[str, Any]
+    units: dict[str, str]
+    epistemic_state: Literal["VERIFIED", "INFERRED", "ASSUMED", "UNKNOWN", "CONFLICTING", "STALE", "NEEDS_REVIEW"] = "VERIFIED"
+    fixture: bool = False
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    valid_until: str | None = None
+
+
+class SolarIn(BaseModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    for_date: str
+
+
+class HistoricalPlanIn(BaseModel):
+    candidates: list[dict[str, Any]]
+
+
+class WorkWindowsIn(BaseModel):
+    windows: list[dict[str, str]]
 
 
 class QualcommResultIn(BaseModel):
@@ -203,6 +255,91 @@ def create_app(database: str = "buildmesh.db", asset_root: str | None = None) ->
     def graph(project_id: str) -> dict[str, Any]:
         return service.store.graph(project_id)
 
+    @app.post("/projects/{project_id}/twin/entities", status_code=201)
+    def twin_entity(project_id: str, payload: TwinEntityIn) -> dict[str, Any]:
+        try:
+            return service.create_twin_entity(project_id, **payload.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/twin/snapshots", status_code=201)
+    def twin_snapshot(project_id: str, payload: TwinSnapshotIn) -> dict[str, Any]:
+        try:
+            return service.create_twin_snapshot(project_id, **payload.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/projects/{project_id}/twin/status")
+    def twin_status(project_id: str, scope_id: str, snapshot_id: str) -> dict[str, Any]:
+        try:
+            return service.twin_status(project_id, scope_id, snapshot_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/projects/{project_id}/twin/diff")
+    def twin_diff(project_id: str, previous_snapshot_id: str, current_snapshot_id: str) -> list[dict[str, Any]]:
+        try:
+            return service.twin_diff(project_id, previous_snapshot_id, current_snapshot_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/twin/snapshots/{snapshot_id}/reconcile")
+    def twin_reconcile(project_id: str, snapshot_id: str) -> list[dict[str, Any]]:
+        try:
+            return service.twin_reconcile(project_id, snapshot_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/environment", status_code=201)
+    def environment(project_id: str, payload: EnvironmentalContextIn) -> dict[str, Any]:
+        try:
+            return service.environmental_context(project_id, **payload.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/projects/{project_id}/environment/status")
+    def environment_status(project_id: str) -> dict[str, Any]:
+        return service.environment_status(project_id)
+
+    @app.post("/projects/{project_id}/environment/refresh", status_code=201)
+    def environment_refresh(project_id: str) -> dict[str, Any]:
+        try:
+            return service.refresh_environment(project_id)
+        except (ValueError, ConnectorError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/environment/reconcile", status_code=201)
+    def environment_reconcile(project_id: str) -> list[dict[str, Any]]:
+        return service.reconcile_environment(project_id)
+
+    @app.get("/projects/{project_id}/environment/plan/{task_id}")
+    def environment_plan(project_id: str, task_id: str) -> dict[str, Any]:
+        try:
+            return service.environment_plan(project_id, task_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/environment/solar", status_code=201)
+    def environmental_solar(project_id: str, payload: SolarIn) -> dict[str, Any]:
+        try:
+            return service.environmental_solar(project_id, **payload.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/environment/historical-plan", status_code=201)
+    def historical_plan(project_id: str, payload: HistoricalPlanIn) -> dict[str, Any]:
+        try:
+            return service.historical_climate_plan(project_id, payload.candidates)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/environment/plan/{task_id}/windows")
+    def work_windows(project_id: str, task_id: str, payload: WorkWindowsIn) -> dict[str, Any]:
+        try:
+            return service.candidate_work_windows(project_id, task_id, payload.windows)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @app.get("/projects/{project_id}/timeline")
     def timeline(project_id: str) -> list[dict[str, Any]]:
         return service.store.events(project_id)
@@ -238,6 +375,13 @@ def create_app(database: str = "buildmesh.db", asset_root: str | None = None) ->
     def add_task_dependency(project_id: str, task_id: str, payload: TaskDependencyIn) -> dict[str, Any]:
         try:
             return service.add_task_dependency(project_id, task_id, payload.prerequisite_task_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/tasks/{task_id}/components", status_code=201)
+    def link_task_component(project_id: str, task_id: str, payload: TaskComponentLinkIn) -> dict[str, Any]:
+        try:
+            return service.link_task_component(project_id, task_id, **payload.model_dump())
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 

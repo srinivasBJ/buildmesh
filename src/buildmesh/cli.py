@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 import sys
+from datetime import UTC, datetime
 from math import ceil
 from pathlib import Path
 from typing import Any
@@ -177,6 +178,65 @@ def spec_status() -> dict[str, Any]:
     return {"requirements": requirements, "counts": counts, "without_verification": [item["id"] for item in requirements if item.get("verification") in {None, "future scenario"}]}
 
 
+def twin_status_command(database: str, project_id: str, scope_id: str, snapshot_id: str) -> dict[str, Any]:
+    return BuildMeshService(database).twin_status(project_id, scope_id, snapshot_id)
+
+
+def twin_diff_command(database: str, project_id: str, previous_snapshot_id: str, current_snapshot_id: str) -> list[dict[str, Any]]:
+    return BuildMeshService(database).twin_diff(project_id, previous_snapshot_id, current_snapshot_id)
+
+
+def twin_reconcile_command(database: str, project_id: str, snapshot_id: str) -> list[dict[str, Any]]:
+    return BuildMeshService(database).twin_reconcile(project_id, snapshot_id)
+
+
+def twin_demo(database: str) -> dict[str, Any]:
+    """Deterministic logical three-floor fixture; observations are explicitly fixtures."""
+    database_path = Path(database)
+    service = BuildMeshService(database_path, database_path.parent / f"{database_path.stem}.assets")
+    project = service.create_project("Building A as-built fixture")
+    root = service.store.project_root(project["id"])
+    site = service.create_twin_entity(project["id"], root["id"], "site", "Fixture Site")
+    building = service.create_twin_entity(project["id"], site["id"], "building", "Building A")
+    floors: list[dict[str, Any]] = []
+    for index in range(1, 4):
+        floor = service.create_twin_entity(project["id"], building["id"], "floor", f"Floor {index}")
+        zone = service.create_twin_entity(project["id"], floor["id"], "zone", f"Floor {index} core")
+        components = {name: service.create_twin_entity(project["id"], zone["id"], "component", name, {"planned_state": "COMPLETE"}) for name in ("structural frame", "walls", "electrical rough-in", "plumbing rough-in", "windows")}
+        floors.append({"floor": floor, "zone": zone, "components": components})
+    source = service.weather_context(project["id"], "fixture:twin-evidence", 0.1, 24, "Fixture-only source evidence")
+    snapshots = []
+    stages = [("Snapshot 1", ["structural frame"]), ("Snapshot 2", ["structural frame", "walls"]), ("Snapshot 3", ["structural frame", "walls", "electrical rough-in", "plumbing rough-in"])]
+    for number, (label, visible) in enumerate(stages, start=1):
+        observed = []
+        for floor in floors:
+            for component_name in visible:
+                observed.append({"component_id": floor["components"][component_name]["id"], "observed_state": "COMPLETE" if component_name != "walls" or number > 2 else "IN_PROGRESS", "confidence": 0.8, "epistemic_state": "INFERRED", "zone_id": floor["zone"]["id"], "fixture": True})
+        snapshots.append(service.create_twin_snapshot(project["id"], label, f"2026-09-0{number}T10:00:00Z", [source["id"]], observed))
+    return {"project_id": project["id"], "building_id": building["id"], "floor_ids": [item["floor"]["id"] for item in floors], "snapshot_ids": [item["id"] for item in snapshots], "diff": service.twin_diff(project["id"], snapshots[1]["id"], snapshots[2]["id"]), "fixture": True}
+
+
+def environment_demo(database: str) -> dict[str, Any]:
+    service = BuildMeshService(database)
+    project = service.create_project("Road foundation environmental fixture", "Bengaluru", {"latitude": 12.9716, "longitude": 77.5946})
+    drainage = service.create_task(project["id"], "Drainage", {"activity": "excavation"})
+    excavation = service.create_task(project["id"], "Foundation excavation", {"activity": "excavation"})
+    service.add_task_dependency(project["id"], excavation["id"], drainage["id"])
+    service.set_task_status(project["id"], excavation["id"], "in_progress", "fixture.system")
+    now = datetime.now(UTC).isoformat()
+    root = service.store.project_root(project["id"])
+    zone = service.create_twin_entity(project["id"], root["id"], "zone", "Foundation zone")
+    component = service.create_twin_entity(project["id"], zone["id"], "component", "Exposed foundation excavation")
+    service.link_task_component(project["id"], excavation["id"], component["id"])
+    source = service.weather_context(project["id"], "fixture:perception-source", .8, 12)
+    snapshot = service.create_twin_snapshot(project["id"], "Fixture as-built observation", now, [source["id"]], [{"component_id": component["id"], "observed_state": "IN_PROGRESS", "confidence": .8, "epistemic_state": "INFERRED", "zone_id": zone["id"], "fixture": True}])
+    weather = service.environmental_context(project["id"], kind="weather_forecast", source="fixture:weather", source_type="fixture", retrieved_at=now, observed_at=now, latitude=12.9716, longitude=77.5946, values={"rain_probability": 0.8, "precipitation_mm": 8, "wind_speed_kph": 15}, units={"rain_probability": "probability", "precipitation_mm": "mm", "wind_speed_kph": "km/h"}, fixture=True, confidence=0.8)
+    traffic = service.environmental_context(project["id"], kind="traffic_context", source="fixture:traffic", source_type="fixture", retrieved_at=now, observed_at=now, latitude=12.9716, longitude=77.5946, values={"congestion_index": 0.85, "window_start": "08:00", "window_end": "10:00"}, units={"congestion_index": "index"}, fixture=True, confidence=0.7)
+    event = service.environmental_context(project["id"], kind="local_event", source="fixture:local-event", source_type="fixture", retrieved_at=now, observed_at=now, latitude=12.9716, longitude=77.5946, values={"disruption_level": .7, "window_start": "08:00", "window_end": "10:00"}, units={"disruption_level": "index"}, fixture=True, confidence=.7)
+    outcome = service.openmesh.run(project["id"])
+    return {"project_id": project["id"], "active_task_id": excavation["id"], "component_id": component["id"], "snapshot_id": snapshot["id"], "environmental_summary": service.environment_status(project["id"]), "project_context": service.environment_plan(project["id"], excavation["id"]), "candidate_windows": service.candidate_work_windows(project["id"], excavation["id"], [{"start": "08:00", "end": "10:00"}]), "evidence_ids": [weather["id"], traffic["id"], event["id"]], "recommendations": outcome["recommendations"], "fixture": True}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="buildmesh")
     parser.add_argument("--database", default="buildmesh.db")
@@ -198,6 +258,37 @@ def main() -> None:
     evaluation = commands.add_parser("evaluate")
     evaluation.add_argument("--scenario", default="all", choices=["all", *__import__("buildmesh.evaluation", fromlist=["SCENARIOS"]).SCENARIOS])
     evaluation.add_argument("--json", action="store_true")
+    twin_status_parser = commands.add_parser("twin-status")
+    twin_status_parser.add_argument("project_id")
+    twin_status_parser.add_argument("scope_id")
+    twin_status_parser.add_argument("snapshot_id")
+    twin_diff_parser = commands.add_parser("twin-diff")
+    twin_diff_parser.add_argument("project_id")
+    twin_diff_parser.add_argument("previous_snapshot_id")
+    twin_diff_parser.add_argument("current_snapshot_id")
+    twin_reconcile_parser = commands.add_parser("twin-reconcile")
+    twin_reconcile_parser.add_argument("project_id")
+    twin_reconcile_parser.add_argument("snapshot_id")
+    commands.add_parser("twin-demo")
+    env_demo = commands.add_parser("environment-demo")
+    environment_status_parser = commands.add_parser("environment-status")
+    environment_status_parser.add_argument("project_id")
+    environment_plan_parser = commands.add_parser("environment-plan")
+    environment_plan_parser.add_argument("project_id")
+    environment_plan_parser.add_argument("task_id")
+    environment_refresh_parser = commands.add_parser("environment-refresh")
+    environment_refresh_parser.add_argument("project_id")
+    context_analyze_parser = commands.add_parser("context-analyze")
+    context_analyze_parser.add_argument("project_id")
+    context_analyze_parser.add_argument("task_id")
+    spatial_import_parser = commands.add_parser("spatial-import")
+    spatial_import_parser.add_argument("project_id"); spatial_import_parser.add_argument("file")
+    ifc_import_parser = commands.add_parser("ifc-import"); ifc_import_parser.add_argument("project_id"); ifc_import_parser.add_argument("file")
+    spatial_status_parser = commands.add_parser("spatial-status"); spatial_status_parser.add_argument("project_id")
+    spatial_diff_parser = commands.add_parser("spatial-diff"); spatial_diff_parser.add_argument("project_id"); spatial_diff_parser.add_argument("planned_id"); spatial_diff_parser.add_argument("snapshot_id")
+    spatial_analyze_parser = commands.add_parser("spatial-analyze"); spatial_analyze_parser.add_argument("project_id"); spatial_analyze_parser.add_argument("scope_id")
+    spatial_semantics_parser = commands.add_parser("spatial-semantics"); spatial_semantics_parser.add_argument("project_id")
+    spatial_query_parser = commands.add_parser("spatial-query"); spatial_query_parser.add_argument("project_id"); spatial_query_parser.add_argument("query"); spatial_query_parser.add_argument("--scope-id"); spatial_query_parser.add_argument("--component-type")
     serve = commands.add_parser("serve")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
@@ -215,6 +306,39 @@ def main() -> None:
     elif args.command == "evaluate":
         result = evaluate(args.scenario)
         print(json.dumps(result, indent=2) if args.json else "\n".join(f"{item['scenario']} {item['status']} — {item['title']}" for item in result["scenarios"]))
+    elif args.command == "twin-status":
+        print(json.dumps(twin_status_command(args.database, args.project_id, args.scope_id, args.snapshot_id), indent=2))
+    elif args.command == "twin-diff":
+        print(json.dumps(twin_diff_command(args.database, args.project_id, args.previous_snapshot_id, args.current_snapshot_id), indent=2))
+    elif args.command == "twin-reconcile":
+        print(json.dumps(twin_reconcile_command(args.database, args.project_id, args.snapshot_id), indent=2))
+    elif args.command == "twin-demo":
+        print(json.dumps(twin_demo(args.database), indent=2))
+    elif args.command == "environment-demo":
+        print(json.dumps(environment_demo(args.database), indent=2))
+    elif args.command == "environment-status":
+        print(json.dumps(BuildMeshService(args.database).environment_status(args.project_id), indent=2))
+    elif args.command == "environment-plan":
+        print(json.dumps(BuildMeshService(args.database).environment_plan(args.project_id, args.task_id), indent=2))
+    elif args.command == "environment-refresh":
+        print(json.dumps(BuildMeshService(args.database).refresh_environment(args.project_id), indent=2))
+    elif args.command == "context-analyze":
+        service = BuildMeshService(args.database)
+        print(json.dumps({"plan": service.environment_plan(args.project_id, args.task_id), "recommendations": service.openmesh.run(args.project_id)["recommendations"]}, indent=2))
+    elif args.command == "spatial-import":
+        print(json.dumps(BuildMeshService(args.database).import_spatial_plan(args.project_id, json.loads(Path(args.file).read_text())), indent=2))
+    elif args.command == "ifc-import":
+        print(json.dumps(BuildMeshService(args.database).import_ifc(args.project_id, args.file), indent=2))
+    elif args.command == "spatial-status":
+        print(json.dumps(BuildMeshService(args.database).spatial_status(args.project_id), indent=2))
+    elif args.command == "spatial-diff":
+        print(json.dumps(BuildMeshService(args.database).spatial_diff(args.project_id, args.planned_id, args.snapshot_id), indent=2))
+    elif args.command == "spatial-analyze":
+        print(json.dumps(BuildMeshService(args.database).spatial_analyze(args.project_id, args.scope_id), indent=2))
+    elif args.command == "spatial-semantics":
+        print(json.dumps(BuildMeshService(args.database).spatial_semantics(args.project_id), indent=2))
+    elif args.command == "spatial-query":
+        print(json.dumps(BuildMeshService(args.database).spatial_query(args.project_id, args.query, args.scope_id, args.component_type), indent=2))
     else:
         import uvicorn
         from .api import create_app

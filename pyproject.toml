@@ -26,6 +26,7 @@ snapdragon = [
   "onnxruntime-qnn>=1.19; platform_system == 'Windows'",
 ]
 vision = ["ultralytics>=8.3,<9.0"]
+ifc = ["ifcopenshell>=0.8,<0.9"]
 
 [project.scripts]
 buildmesh = "buildmesh.cli:main"

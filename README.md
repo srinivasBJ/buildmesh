@@ -53,6 +53,12 @@ buildmesh --database ./buildmesh.db serve
 
 Open `http://127.0.0.1:8000` for the local BuildMesh workspace or `http://127.0.0.1:8000/docs` for the API. On Windows, activate the environment with `.venv\\Scripts\\activate`.
 
+Environmental intelligence is evidence-first: normalized Open-Meteo forecasts may be `LIVE`; deterministic demos are `FIXTURE`; solar is `CALCULATED`; reports may be `MANUAL`; aggregate climate is `HISTORICAL`, never a forecast. `UNKNOWN`, `STALE`, and `CONFLICTING` remain distinct and request review rather than silently claiming safety. Run `buildmesh evaluate --scenario all --json` to execute the core and `ENV-001`–`ENV-010` behavioral suites.
+
+IFC support uses the real local IfcOpenShell parser: `buildmesh ifc-import <project-id> <file.ifc>` normalizes supported IFC2X3/accepted-schema entities into planned spatial state with file-hash provenance. It is not a CAD editor, IFC geometry engine, or engineering-certification workflow.
+
+Planned↔observed correspondence is snapshot-scoped and uses verified IFC identity, validated planned-evidence snapshot lineage, or bounded IFC-placement distance. Ambiguous candidates remain reviewable conflicts; they are never auto-selected.
+
 For a local container runtime:
 
 ```bash
