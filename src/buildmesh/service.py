@@ -792,12 +792,25 @@ class BuildMeshService:
 
     def notify_reviewer(self, recommendation_id: str, recipient: str) -> dict[str, Any]:
         recommendation = self.store.get_recommendation(recommendation_id)
+        prior = [event for event in self.store.events(recommendation["project_id"]) if event["kind"] == "review_notification" and event["payload"].get("recommendation_id") == recommendation_id and event["payload"].get("recipient") == recipient]
+        if prior:
+            return {"status": "idempotent", **prior[0]["payload"]}
         if not self.notifier:
             result = {"status": "not_configured", "channel": "smtp", "recipient": recipient}
         else:
             result = self.notifier.send(recipient, f"BuildMesh review: {recommendation['title']}", f"A {recommendation['severity']} BuildMesh recommendation requires review.\n\n{recommendation['rationale']}")
-        self.store.record_event(recommendation["project_id"], "review_notification", {"recommendation_id": recommendation_id, **result}, recommendation_id)
-        return result
+        payload = {"recommendation_id": recommendation_id, "recipient": recipient, "fixture": result.get("mode") == "fixture", **result}
+        self.store.record_event(recommendation["project_id"], "review_notification", payload, recommendation_id)
+        return payload
+
+    def recovery_options(self, project_id: str, task_id: str) -> dict[str, Any]:
+        """Generate reversible schedule alternatives; never select one automatically."""
+        task = self.store.get_node(task_id)
+        if task["project_id"] != project_id or task["kind"] != "task": raise ValueError("task is outside project")
+        graph = self.store.graph(project_id); prerequisites = [edge["target_id"] for edge in graph["edges"] if edge["relation"] == "depends_on" and edge["source_id"] == task_id]; downstream = [edge["source_id"] for edge in graph["edges"] if edge["relation"] == "depends_on" and edge["target_id"] == task_id]
+        affected = [task_id, *downstream]
+        options = [("RESEQUENCE", affected, "reduce waiting time", "MEDIUM"), ("SHIFT_WINDOW", [task_id], "recover one work window", "HIGH"), ("COMPLETE_PREREQUISITE", [*prerequisites, task_id], "remove dependency block", "LOW"), ("MITIGATE_AND_REVIEW", [task_id], "preserve current plan pending review", "HIGH")]
+        return {"project_id": project_id, "task_id": task_id, "options": [{"id": ident, "affected_task_ids": ids, "assumptions": ["site conditions remain as supplied"], "dependencies": prerequisites if ident != "SHIFT_WINDOW" else [], "expected_schedule_effect": effect, "uncertainty": uncertainty} for ident, ids, effect, uncertainty in options], "selected": None, "requires_human_approval": True}
 
     def approve(self, recommendation_id: str, reviewer: str, decision: str, comment: str | None = None) -> dict[str, Any]:
         return self.store.review_recommendation(recommendation_id, reviewer, RecommendationStatus(decision), comment)

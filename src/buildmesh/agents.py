@@ -323,6 +323,25 @@ class DesignRealityAgent:
         store.record_agent_run(project_id, self.name, {"reconciliation_count": len(findings)}, {"findings": findings, "evidence_ids": ids})
         return AgentResult(self.name, findings, ids)
 
+class EscalationAgent:
+    """Classifies unresolved recommendations; never escalates by itself."""
+    name = "escalation-agent"
+    def run(self, store: Store, project_id: str, evidence: list[dict[str, Any]]) -> AgentResult:
+        recommendations = store.recommendations(project_id)
+        findings = [{"type": "escalation", "recommendation_id": item["id"], "level": "ESCALATE" if item["severity"] == "high" else "REVIEW", "evidence_ids": item["evidence_ids"], "requires_human_review": True} for item in recommendations if item["status"] == "pending_review"]
+        ids = sorted({eid for item in findings for eid in item["evidence_ids"]})
+        store.record_agent_run(project_id, self.name, {"recommendation_ids": [item["id"] for item in recommendations]}, {"findings": findings, "evidence_ids": ids})
+        return AgentResult(self.name, findings, ids)
+
+class ReportingAgent:
+    """Produces a read-only operational brief from persisted graph state."""
+    name = "reporting-agent"
+    def run(self, store: Store, project_id: str, evidence: list[dict[str, Any]]) -> AgentResult:
+        graph = store.graph(project_id); tasks = [n for n in graph["nodes"] if n["kind"] == "task"]; recs = store.recommendations(project_id)
+        report = {"project_id": project_id, "progress": round(sum(float(n["attributes"].get("reported_percent", 0)) for n in tasks) / len(tasks), 1) if tasks else None, "blocked": sum(n["attributes"].get("status") == "blocked" for n in tasks), "reviews_required": sum(r["status"] == "pending_review" for r in recs), "recommended_actions": len(recs), "evidence_ids": sorted({eid for r in recs for eid in r["evidence_ids"]})}
+        store.record_agent_run(project_id, self.name, {"evidence_count": len(evidence)}, report)
+        return AgentResult(self.name, [{"type": "daily_project_brief", **report}], report["evidence_ids"])
+
 
 class RecommendationAgent:
     name = "recommendation-agent"
@@ -397,6 +416,8 @@ class OpenMeshOrchestrator:
         self.plan_constraint_agent = PlanConstraintAgent()
         self.context_fusion_agent = ContextFusionAgent()
         self.design_reality_agent = DesignRealityAgent()
+        self.escalation_agent = EscalationAgent()
+        self.reporting_agent = ReportingAgent()
         self.risk_agent = RiskAgent()
         self.recommendation_agent = RecommendationAgent()
 
@@ -413,4 +434,6 @@ class OpenMeshOrchestrator:
         risks = self.risk_agent.run(self.store, project_id, evidence, state, documents, schedule, materials, dependencies, plan_constraints)
         risks = AgentResult(risks.agent, [*risks.findings, *context_fusion.findings], sorted(set([*risks.evidence_ids, *context_fusion.evidence_ids])))
         recommendations = self.recommendation_agent.run(self.store, project_id, risks)
-        return {"project_id": project_id, "agent_results": [{"agent": documents.agent, "findings": documents.findings}, {"agent": state.agent, "findings": state.findings}, {"agent": schedule.agent, "findings": schedule.findings}, {"agent": materials.agent, "findings": materials.findings}, {"agent": dependencies.agent, "findings": dependencies.findings}, {"agent": plan_constraints.agent, "findings": plan_constraints.findings}, {"agent": context_fusion.agent, "findings": context_fusion.findings}, {"agent": design_reality.agent, "findings": design_reality.findings}, {"agent": risks.agent, "findings": risks.findings}], "recommendations": recommendations, "human_approval_required": any(r.get("proposed_task") for r in recommendations)}
+        escalation = self.escalation_agent.run(self.store, project_id, evidence)
+        report = self.reporting_agent.run(self.store, project_id, evidence)
+        return {"project_id": project_id, "agent_results": [{"agent": documents.agent, "findings": documents.findings}, {"agent": state.agent, "findings": state.findings}, {"agent": schedule.agent, "findings": schedule.findings}, {"agent": materials.agent, "findings": materials.findings}, {"agent": dependencies.agent, "findings": dependencies.findings}, {"agent": plan_constraints.agent, "findings": plan_constraints.findings}, {"agent": context_fusion.agent, "findings": context_fusion.findings}, {"agent": design_reality.agent, "findings": design_reality.findings}, {"agent": risks.agent, "findings": risks.findings}, {"agent": escalation.agent, "findings": escalation.findings}, {"agent": report.agent, "findings": report.findings}], "recommendations": recommendations, "human_approval_required": any(r.get("proposed_task") for r in recommendations)}

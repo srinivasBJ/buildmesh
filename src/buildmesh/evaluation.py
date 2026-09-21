@@ -234,6 +234,28 @@ def _design_scope(tmp: str) -> list[str]:
 def _design_idempotence(tmp: str) -> list[str]:
     service, project = _service(tmp); imported = service.import_ifc(project["id"], Path(__file__).parents[2] / "tests" / "fixtures" / "rich-apartment.ifc"); planned = next(n for n in service.store.graph(project["id"])["nodes"] if n["attributes"].get("ifc_global_id") == "C$WinLiving"); root = service.store.project_root(project["id"]); zone = service.create_twin_entity(project["id"], root["id"], "zone", "z"); obs = service.create_twin_entity(project["id"], zone["id"], "component", "o", {"ifc_global_id": "C$WinLiving", "ifc_class": "IfcWindow", "placement": {"x": 2., "y": 1.}}); src = service.weather_context(project["id"], "fixture", .1, 1); snap = service.create_twin_snapshot(project["id"], "s", datetime.now(UTC).isoformat(), [src["id"]], [{"component_id": obs["id"], "observed_state": "COMPLETE", "confidence": .9, "epistemic_state": "VERIFIED", "zone_id": zone["id"], "fixture": True}]); service.resolve_spatial_match(project["id"], planned["id"], snap["id"]); service.design_reality_analyze(project["id"], planned["id"], snap["id"]); before = service.store.graph(project["id"]); events = len(service.store.events(project["id"])); service.design_reality_analyze(project["id"], planned["id"], snap["id"]); after = service.store.graph(project["id"]); return ["one persisted edge" if len([e for e in after["edges"] if e["relation"] == "design_reconciliation"]) == 1 else "duplicate edge", "event stable" if len(service.store.events(project["id"])) == events else "duplicate event", "graph stable" if len(before["edges"]) == len(after["edges"]) else "graph changed"]
 
+def _ops_project(tmp: str) -> tuple[BuildMeshService, dict[str, Any], dict[str, Any]]:
+    service, project = _service(tmp); task = service.create_task(project["id"], "Excavation", {"planned_material_units": 100}); service.set_task_status(project["id"], task["id"], "in_progress", "fixture:operator"); return service, project, task
+def _ops_normal(tmp: str) -> list[str]:
+    service, project, task = _ops_project(tmp); result = service.openmesh.run(project["id"]); return ["orchestration ran" if result["agent_results"] else "missing orchestration", "report emitted" if any(a["agent"] == "reporting-agent" for a in result["agent_results"]) else "missing report"]
+def _ops_delay(tmp: str) -> list[str]:
+    service, project, task = _ops_project(tmp); options = service.recovery_options(project["id"], task["id"]); return ["four recovery options" if len(options["options"]) == 4 else "missing recovery options", "no automatic selection" if options["selected"] is None and options["requires_human_approval"] else "unsafe selection"]
+def _ops_dependency(tmp: str) -> list[str]:
+    service, project, task = _ops_project(tmp); prerequisite = service.create_task(project["id"], "Drainage", {}); service.add_task_dependency(project["id"], task["id"], prerequisite["id"]); return ["dependency represented" if service.recovery_options(project["id"], task["id"])["options"][0]["dependencies"] else "missing dependency"]
+def _ops_material(tmp: str) -> list[str]:
+    service, project, task = _ops_project(tmp); evidence = service.progress_update(project["id"], task["id"], 80, 100, 80, "fixture:worker", material_units=55); result = service.openmesh.run(project["id"]); rec = next((r for r in result["recommendations"] if "material" in r["title"].lower()), None); return ["material variance" if rec else "missing material variance", "evidence retained" if rec and evidence["id"] in rec["evidence_ids"] else "missing evidence"]
+def _ops_design(tmp: str) -> list[str]: return _design(tmp)
+def _ops_environment(tmp: str) -> list[str]: return _weather(tmp)
+def _ops_conflict(tmp: str) -> list[str]: return _conflicting(tmp)
+def _ops_escalation(tmp: str) -> list[str]:
+    service, project, task = _ops_project(tmp); service.weather_context(project["id"], "fixture", .9, 2); result = service.openmesh.run(project["id"]); findings = [a for a in result["agent_results"] if a["agent"] == "escalation-agent"]; return ["escalation classified" if findings else "missing escalation"]
+def _ops_duplicate(tmp: str) -> list[str]:
+    service, project, task = _ops_project(tmp); service.weather_context(project["id"], "fixture", .9, 2); result = service.openmesh.run(project["id"]); rec = result["recommendations"][0]; service.notify_reviewer(rec["id"], "fixture:site-engineer"); second = service.notify_reviewer(rec["id"], "fixture:site-engineer"); return ["notification idempotent" if second["status"] == "idempotent" else "duplicate notification"]
+def _ops_approval(tmp: str) -> list[str]: return _approval(tmp)
+def _ops_malformed(tmp: str) -> list[str]: return _invalid(tmp)
+def _ops_closed_loop(tmp: str) -> list[str]:
+    service, project, task = _ops_project(tmp); service.weather_context(project["id"], "fixture", .9, 2); result = service.openmesh.run(project["id"]); rec = result["recommendations"][0]; approved = service.approve(rec["id"], "fixture:reviewer", "approved", "fixture approval"); return ["approved action materialized" if approved["status"] == "approved" else "missing approval", "audit event" if any(e["kind"] == "task_created_from_approval" for e in service.store.events(project["id"])) else "missing audit"]
+
 def _spatial_semantic(tmp: str) -> list[str]:
     service, project = _service(tmp); plan = {"schema_version": "buildmesh-spatial-plan-v1", "source": {"reference": "fixture:boxes", "fixture": True}, "entities": [{"id": "R", "kind": "room", "label": "Room", "parent_id": None, "attributes": {}, "geometry": {"type": "bounding_box", "coordinates": [0,0,10,10], "coordinate_system": "local", "dimensions": {}}, "orientation": "UNKNOWN"}, {"id": "C", "kind": "component", "label": "Door", "parent_id": "R", "attributes": {}, "geometry": {"type": "bounding_box", "coordinates": [1,1,2,2], "coordinate_system": "local", "dimensions": {}}, "orientation": "UNKNOWN"}]}; ids = service.import_spatial_plan(project["id"], plan)["entity_ids"]; semantic = service.spatial_semantics(project["id"])
     return ["geometry relationship derived" if semantic["relationships_created"] else "missing relationship", "room containment query" if service.spatial_query(project["id"], "components_in_room", ids[0])["components"] else "missing containment"]
@@ -316,6 +338,18 @@ SCENARIOS: dict[str, tuple[str, list[str], Callable[[str], list[str]]]] = {
     "DESIGN-018": ("environment-aware reasoning", ["REQ-DESIGN-015"], _design),
     "DESIGN-019": ("task impact from deviation", ["REQ-DESIGN-016"], _design),
     "DESIGN-020": ("historical reconciliation immutability", ["REQ-DESIGN-014"], _design_scope),
+    "OPS-001": ("normal operation", ["REQ-OPS-001"], _ops_normal),
+    "OPS-002": ("delayed task recovery", ["REQ-OPS-010"], _ops_delay),
+    "OPS-003": ("dependency cascade", ["REQ-OPS-010"], _ops_dependency),
+    "OPS-004": ("material variance", ["REQ-OPS-001"], _ops_material),
+    "OPS-005": ("design deviation", ["REQ-DESIGN-006"], _ops_design),
+    "OPS-006": ("environmental risk", ["REQ-OPS-001"], _ops_environment),
+    "OPS-007": ("conflicting evidence", ["REQ-OPS-009"], _ops_conflict),
+    "OPS-008": ("high severity escalation", ["REQ-OPS-009"], _ops_escalation),
+    "OPS-009": ("duplicate recommendation notification", ["REQ-OPS-006"], _ops_duplicate),
+    "OPS-010": ("duplicate approval", ["REQ-OPS-003", "REQ-OPS-004"], _ops_approval),
+    "OPS-011": ("malformed agent output", ["REQ-OPS-007"], _ops_malformed),
+    "OPS-012": ("closed loop operation", ["REQ-OPS-008"], _ops_closed_loop),
 }
 
 

@@ -10,6 +10,7 @@
 | As-built relevance | explicit task → component edge, traceable twin observations | `ENV-002`, `ENV-009` |
 | Spatial foundation | planned JSON → project graph → observed-twin comparison | `tests/test_spatial.py` |
 | Design-to-reality | snapshot-scoped matching, deviation/type/scope conflict, review provenance | `DESIGN-013`–`DESIGN-020`, `design-reality-demo`, `tests/test_ifc.py` |
+| Agentic operations | bounded specialists, risk consolidation, approval-gated actions, notifications, daily brief | `OPS-001`–`OPS-012`, `docs/buildmesh-spec/agentic-operations.md` |
 
 QNN/NPU execution remains unverified until `NPU_EXECUTED` evidence exists.
 

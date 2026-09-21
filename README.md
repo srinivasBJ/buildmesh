@@ -61,6 +61,8 @@ Planned↔observed correspondence is snapshot-scoped and uses verified IFC ident
 
 Design reality reconciliation compares planned IFC components with independently observed snapshots. It preserves `MATCHED`, `SPATIAL_DEVIATION`, `TYPE_CONFLICT`, `SCOPE_CONFLICT`, `NOT_OBSERVED`, and `UNKNOWN` states, task/review provenance, and immutable snapshot history. Run `design-reality-demo` for the deterministic four-snapshot apartment fixture. The demo is fixture evidence only; this project does not claim full 3D reconstruction or engineering certification.
 
+Phase 6 adds bounded, evidence-grounded, human-approved operations: specialist schedule/material/risk agents, recovery alternatives, escalation classification, idempotent notifications, approval-gated action materialization, and a daily project brief. It does not claim autonomous construction management.
+
 For a local container runtime:
 
 ```bash

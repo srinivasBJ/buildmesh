@@ -1,4 +1,54 @@
 requirements:
+  - id: REQ-OPS-001
+    title: Operational recommendations retain evidence
+    status: IMPLEMENTED
+    implementation: src/buildmesh/agents.py:RecommendationAgent
+    verification: OPS-004; OPS-006
+  - id: REQ-OPS-002
+    title: Agents cannot directly mutate trusted state
+    status: IMPLEMENTED
+    implementation: src/buildmesh/agents.py:OpenMeshOrchestrator
+    verification: OPS-012
+  - id: REQ-OPS-003
+    title: Consequential actions require approval
+    status: IMPLEMENTED
+    implementation: src/buildmesh/storage.py:review_recommendation
+    verification: OPS-010; OPS-012
+  - id: REQ-OPS-004
+    title: Approved actions materialize exactly once
+    status: IMPLEMENTED
+    implementation: src/buildmesh/storage.py:recommendation_materializations
+    verification: OPS-010; OPS-012
+  - id: REQ-OPS-005
+    title: Notifications retain project and evidence context
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:notify_reviewer
+    verification: OPS-012
+  - id: REQ-OPS-006
+    title: Repeated operational context is idempotent
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:notify_reviewer
+    verification: OPS-009
+  - id: REQ-OPS-007
+    title: Agent outputs use bounded schemas
+    status: IMPLEMENTED
+    implementation: src/buildmesh/agents.py:AgentResult
+    verification: OPS-011
+  - id: REQ-OPS-008
+    title: Operational timeline is auditable
+    status: IMPLEMENTED
+    implementation: src/buildmesh/storage.py:events
+    verification: OPS-012
+  - id: REQ-OPS-009
+    title: Risk consolidation preserves contributing evidence
+    status: IMPLEMENTED
+    implementation: src/buildmesh/agents.py:RiskAgent
+    verification: OPS-008
+  - id: REQ-OPS-010
+    title: Recovery alternatives expose assumptions and uncertainty
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:recovery_options
+    verification: OPS-002; OPS-003
   - id: REQ-DESIGN-001
     title: Planned and observed state can be compared
     status: IMPLEMENTED

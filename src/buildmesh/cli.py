@@ -272,6 +272,8 @@ def main() -> None:
     twin_reconcile_parser.add_argument("snapshot_id")
     commands.add_parser("twin-demo")
     commands.add_parser("design-reality-demo")
+    recovery_parser = commands.add_parser("recovery-options"); recovery_parser.add_argument("project_id"); recovery_parser.add_argument("task_id")
+    brief_parser = commands.add_parser("daily-brief"); brief_parser.add_argument("project_id")
     env_demo = commands.add_parser("environment-demo")
     environment_status_parser = commands.add_parser("environment-status")
     environment_status_parser.add_argument("project_id")
@@ -321,6 +323,10 @@ def main() -> None:
         with TemporaryDirectory(prefix="buildmesh-design-demo-") as directory:
             result = _design_multi(directory)
         print(json.dumps({"snapshots": result["snapshots"], "timeline": result["timeline"], "recommendation_count": len(result["recommendations"]), "fixture": True}, indent=2))
+    elif args.command == "recovery-options":
+        print(json.dumps(BuildMeshService(args.database).recovery_options(args.project_id, args.task_id), indent=2))
+    elif args.command == "daily-brief":
+        print(json.dumps(BuildMeshService(args.database).daily_report(args.project_id), indent=2))
     elif args.command == "environment-demo":
         print(json.dumps(environment_demo(args.database), indent=2))
     elif args.command == "environment-status":
