@@ -3,6 +3,18 @@ from __future__ import annotations
 from typing import Any
 
 TYPE_COMPATIBILITY = {"IfcWindow": {"IfcWindow", "window"}, "IfcDoor": {"IfcDoor", "door"}, "IfcWall": {"IfcWall", "wall"}}
+SCOPE_LEVELS = ("project", "building", "floor", "zone", "room", "component")
+
+def compare_scope_hierarchy(planned: dict[str, Any] | None, observed: dict[str, Any] | None) -> dict[str, Any]:
+    """Compare explicit scope IDs without inferring missing hierarchy."""
+    planned = planned or {}; observed = observed or {}
+    for level in SCOPE_LEVELS:
+        left, right = planned.get(level), observed.get(level)
+        if left is None or right is None:
+            return {"decision": "UNKNOWN", "scope_conflict_level": None, "planned": planned, "observed": observed, "epistemic_state": "UNKNOWN"}
+        if left != right:
+            return {"decision": "SCOPE_CONFLICT", "scope_conflict_level": level.upper(), "planned": planned, "observed": observed, "epistemic_state": "NEEDS_REVIEW"}
+    return {"decision": "CONSISTENT", "scope_conflict_level": None, "planned": planned, "observed": observed, "epistemic_state": "VERIFIED"}
 
 def reconcile(planned: dict[str, Any], observed: dict[str, Any] | None, match: dict[str, Any] | None, task_ids: list[str], environment_ids: list[str], tolerance: float, planned_scope_id: str | None = None, observed_scope_id: str | None = None) -> dict[str, Any]:
     if tolerance <= 0: raise ValueError("spatial tolerance must be positive")

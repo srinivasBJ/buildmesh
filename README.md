@@ -59,6 +59,8 @@ IFC support uses the real local IfcOpenShell parser: `buildmesh ifc-import <proj
 
 Planned↔observed correspondence is snapshot-scoped and uses verified IFC identity, validated planned-evidence snapshot lineage, or bounded IFC-placement distance. Ambiguous candidates remain reviewable conflicts; they are never auto-selected.
 
+Design reality reconciliation compares planned IFC components with independently observed snapshots. It preserves `MATCHED`, `SPATIAL_DEVIATION`, `TYPE_CONFLICT`, `SCOPE_CONFLICT`, `NOT_OBSERVED`, and `UNKNOWN` states, task/review provenance, and immutable snapshot history. Run `design-reality-demo` for the deterministic four-snapshot apartment fixture. The demo is fixture evidence only; this project does not claim full 3D reconstruction or engineering certification.
+
 For a local container runtime:
 
 ```bash

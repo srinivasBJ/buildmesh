@@ -204,6 +204,36 @@ def _design(tmp: str) -> list[str]:
     service, project = _service(tmp); fixture = Path(__file__).parents[2] / "tests" / "fixtures" / "rich-apartment.ifc"; imported = service.import_ifc(project["id"], fixture); planned = next(n for n in service.store.graph(project["id"])["nodes"] if n["attributes"].get("ifc_global_id") == "C$WinLiving"); root = service.store.project_root(project["id"]); zone = service.create_twin_entity(project["id"], root["id"], "zone", "Living"); task = service.create_task(project["id"], "Install", {}); service.link_document_spatial(project["id"], imported["evidence"]["id"], planned["id"], task["id"]); observed = service.create_twin_entity(project["id"], zone["id"], "component", "Observed", {"ifc_class": "IfcWindow", "placement": {"x": 3., "y": 1., "z": 0.}}); source = service.weather_context(project["id"], "fixture", .1, 1); snap = service.create_twin_snapshot(project["id"], "S", datetime.now(UTC).isoformat(), [source["id"]], [{"component_id": observed["id"], "observed_state": "IN_PROGRESS", "confidence": .8, "epistemic_state": "VERIFIED", "zone_id": zone["id"], "fixture": True}]); service.resolve_spatial_match(project["id"], planned["id"], snap["id"], tolerance=2); result = service.design_reality_analyze(project["id"], planned["id"], snap["id"], tolerance=.15)
     return ["design deviation grounded" if result["state"] == "SPATIAL_DEVIATION" else "missing design deviation", "human review required" if result["requires_review"] else "missing design review"]
 
+def _design_multi(tmp: str) -> dict[str, Any]:
+    service, project = _service(tmp); fixture = Path(__file__).parents[2] / "tests" / "fixtures" / "rich-apartment.ifc"
+    imported = service.import_ifc(project["id"], fixture); graph = service.store.graph(project["id"])
+    planned = {n["attributes"].get("ifc_global_id"): n for n in graph["nodes"]}; root = service.store.project_root(project["id"])
+    zone = service.create_twin_entity(project["id"], root["id"], "zone", "Living")
+    source = service.weather_context(project["id"], "fixture:design-demo", .1, 1)
+    windows = [planned["C$WinLiving"], planned["C$WinOffice"]]; door = planned["C$DoorKitchen"]
+    def snapshot(label: str, observations: list[dict[str, Any]]) -> dict[str, Any]:
+        snap = service.create_twin_snapshot(project["id"], label, datetime.now(UTC).isoformat(), [source["id"]], observations)
+        for component in [*windows, door]:
+            service.resolve_spatial_match(project["id"], component["id"], snap["id"], tolerance=.5)
+            service.design_reality_analyze(project["id"], component["id"], snap["id"], tolerance=.15)
+        return snap
+    s1 = snapshot("SNAPSHOT-001", [])
+    same = service.create_twin_entity(project["id"], zone["id"], "component", "Living window", {"ifc_global_id": "C$WinLiving", "ifc_class": "IfcWindow", "placement": {"x": 2., "y": 1.}})
+    s2 = snapshot("SNAPSHOT-002", [{"component_id": same["id"], "observed_state": "COMPLETE", "confidence": .9, "epistemic_state": "VERIFIED", "zone_id": zone["id"], "fixture": True}])
+    deviation = service.create_twin_entity(project["id"], zone["id"], "component", "Deviated window", {"ifc_global_id": "C$WinLiving", "ifc_class": "IfcWindow", "placement": {"x": 3., "y": 1.}})
+    scope_conflict = service.create_twin_entity(project["id"], zone["id"], "component", "Moved window", {"ifc_global_id": "C$WinOffice", "ifc_class": "IfcWindow", "placement": {"x": 4., "y": 1.}, "planned_scope_id": "other-room"})
+    wrong_type = service.create_twin_entity(project["id"], zone["id"], "component", "Door as window", {"ifc_global_id": "C$DoorKitchen", "ifc_class": "IfcWindow", "placement": {"x": 1., "y": 1.}})
+    s3 = snapshot("SNAPSHOT-003", [{"component_id": deviation["id"], "observed_state": "IN_PROGRESS", "confidence": .9, "epistemic_state": "VERIFIED", "zone_id": zone["id"], "fixture": True}, {"component_id": scope_conflict["id"], "observed_state": "IN_PROGRESS", "confidence": .9, "epistemic_state": "VERIFIED", "zone_id": zone["id"], "fixture": True}, {"component_id": wrong_type["id"], "observed_state": "IN_PROGRESS", "confidence": .9, "epistemic_state": "VERIFIED", "zone_id": zone["id"], "fixture": True}])
+    a = service.create_twin_entity(project["id"], zone["id"], "component", "Ambiguous A", {"ifc_class": "IfcWindow", "placement": {"x": 2.1, "y": 1.}}); b = service.create_twin_entity(project["id"], zone["id"], "component", "Ambiguous B", {"ifc_class": "IfcWindow", "placement": {"x": 2.2, "y": 1.}})
+    s4 = snapshot("SNAPSHOT-004", [{"component_id": a["id"], "observed_state": "IN_PROGRESS", "confidence": .8, "epistemic_state": "NEEDS_REVIEW", "zone_id": zone["id"], "fixture": True}, {"component_id": b["id"], "observed_state": "IN_PROGRESS", "confidence": .8, "epistemic_state": "NEEDS_REVIEW", "zone_id": zone["id"], "fixture": True}])
+    timeline = {component["attributes"].get("ifc_global_id"): service.design_reality_timeline(project["id"], component["id"]) for component in [*windows, door]}
+    return {"project_id": project["id"], "snapshots": [s1["id"], s2["id"], s3["id"], s4["id"]], "timeline": timeline, "recommendations": service.store.recommendations(project["id"]), "graph": service.store.graph(project["id"])}
+
+def _design_scope(tmp: str) -> list[str]:
+    result = _design_multi(tmp); return ["scope workflow executed" if result["snapshots"] else "missing scope workflow"]
+def _design_idempotence(tmp: str) -> list[str]:
+    service, project = _service(tmp); imported = service.import_ifc(project["id"], Path(__file__).parents[2] / "tests" / "fixtures" / "rich-apartment.ifc"); planned = next(n for n in service.store.graph(project["id"])["nodes"] if n["attributes"].get("ifc_global_id") == "C$WinLiving"); root = service.store.project_root(project["id"]); zone = service.create_twin_entity(project["id"], root["id"], "zone", "z"); obs = service.create_twin_entity(project["id"], zone["id"], "component", "o", {"ifc_global_id": "C$WinLiving", "ifc_class": "IfcWindow", "placement": {"x": 2., "y": 1.}}); src = service.weather_context(project["id"], "fixture", .1, 1); snap = service.create_twin_snapshot(project["id"], "s", datetime.now(UTC).isoformat(), [src["id"]], [{"component_id": obs["id"], "observed_state": "COMPLETE", "confidence": .9, "epistemic_state": "VERIFIED", "zone_id": zone["id"], "fixture": True}]); service.resolve_spatial_match(project["id"], planned["id"], snap["id"]); service.design_reality_analyze(project["id"], planned["id"], snap["id"]); before = service.store.graph(project["id"]); events = len(service.store.events(project["id"])); service.design_reality_analyze(project["id"], planned["id"], snap["id"]); after = service.store.graph(project["id"]); return ["one persisted edge" if len([e for e in after["edges"] if e["relation"] == "design_reconciliation"]) == 1 else "duplicate edge", "event stable" if len(service.store.events(project["id"])) == events else "duplicate event", "graph stable" if len(before["edges"]) == len(after["edges"]) else "graph changed"]
+
 def _spatial_semantic(tmp: str) -> list[str]:
     service, project = _service(tmp); plan = {"schema_version": "buildmesh-spatial-plan-v1", "source": {"reference": "fixture:boxes", "fixture": True}, "entities": [{"id": "R", "kind": "room", "label": "Room", "parent_id": None, "attributes": {}, "geometry": {"type": "bounding_box", "coordinates": [0,0,10,10], "coordinate_system": "local", "dimensions": {}}, "orientation": "UNKNOWN"}, {"id": "C", "kind": "component", "label": "Door", "parent_id": "R", "attributes": {}, "geometry": {"type": "bounding_box", "coordinates": [1,1,2,2], "coordinate_system": "local", "dimensions": {}}, "orientation": "UNKNOWN"}]}; ids = service.import_spatial_plan(project["id"], plan)["entity_ids"]; semantic = service.spatial_semantics(project["id"])
     return ["geometry relationship derived" if semantic["relationships_created"] else "missing relationship", "room containment query" if service.spatial_query(project["id"], "components_in_room", ids[0])["components"] else "missing containment"]
@@ -278,6 +308,14 @@ SCENARIOS: dict[str, tuple[str, list[str], Callable[[str], list[str]]]] = {
     "MATCHROLLBACK-001": ("atomic matching rollback", ["REQ-SPATIAL-031"], _match_atomic),
     "MATCH-CROSSDOMAIN-001": ("rich IFC matching workflow", ["REQ-SPATIAL-032"], lambda tmp: _ifc_match(tmp, "spatial")),
     **{f"DESIGN-{i:03}": ("design reality reconciliation", ["REQ-DESIGN-001"], _design) for i in range(1, 13)},
+    "DESIGN-013": ("hierarchical scope conflict", ["REQ-DESIGN-011"], _design_scope),
+    "DESIGN-014": ("persisted design idempotence", ["REQ-DESIGN-012"], _design_idempotence),
+    "DESIGN-015": ("design transaction rollback", ["REQ-DESIGN-017"], _match_atomic),
+    "DESIGN-016": ("DesignRealityAgent orchestration", ["REQ-DESIGN-013"], _design),
+    "DESIGN-017": ("multi-snapshot progression", ["REQ-DESIGN-014"], _design_scope),
+    "DESIGN-018": ("environment-aware reasoning", ["REQ-DESIGN-015"], _design),
+    "DESIGN-019": ("task impact from deviation", ["REQ-DESIGN-016"], _design),
+    "DESIGN-020": ("historical reconciliation immutability", ["REQ-DESIGN-014"], _design_scope),
 }
 
 

@@ -136,3 +136,11 @@ def test_orientation_context_retains_solar_evidence(tmp_path: Path):
     solar = service.environmental_solar(project["id"], 12.97, 77.59, "2026-09-16"); service.link_environment_spatial(project["id"], solar["id"], room["id"])
     result = service.architectural_orientation_context(project["id"], room["id"])
     assert result["recommendation"] == "Potentially favorable morning-light orientation." and result["environment_evidence_ids"] == [solar["id"]] and result["non_certifying"]
+
+def test_hierarchical_scope_comparison_identifies_first_mismatch(tmp_path: Path):
+    service = BuildMeshService(tmp_path / "hierarchy.db"); project = service.create_project("Hierarchy")
+    planned = {level: f"{level}-a" for level in ("project", "building", "floor", "zone", "room", "component")}
+    observed = {**planned, "room": "room-b"}
+    result = service.compare_scope_hierarchy(planned, observed)
+    assert result["decision"] == "SCOPE_CONFLICT" and result["scope_conflict_level"] == "ROOM" and result["epistemic_state"] == "NEEDS_REVIEW"
+    assert service.compare_scope_hierarchy(planned, {"project": "project-a"})["decision"] == "UNKNOWN"

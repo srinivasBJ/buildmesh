@@ -16,7 +16,7 @@ from . import twin
 from .environment import historical_windows, normalize, score, solar
 from .spatial import geometric_relationship, geometry_status, planned_nodes, validate_plan
 from .ifc import parse as parse_ifc
-from .design_reality import reconcile as reconcile_design
+from .design_reality import reconcile as reconcile_design, compare_scope_hierarchy
 from .ingestion import DocumentExtractor, LocalAssetStore
 from .reporting import build_daily_report
 from .storage import Store
@@ -286,6 +286,14 @@ class BuildMeshService:
         planned_scope = next((edge["source_id"] for edge in graph["edges"] if edge["target_id"] == planned_id and edge["relation"] == "contains"), None)
         observed_scope = observed["attributes"].get("planned_scope_id") if observed else None
         result = reconcile_design(planned, observed, match, tasks, environment, tolerance, planned_scope, observed_scope)
+        planned_hierarchy = planned["attributes"].get("scope_hierarchy")
+        observed_hierarchy = observed["attributes"].get("scope_hierarchy") if observed else None
+        if planned_hierarchy or observed_hierarchy:
+            scope_result = compare_scope_hierarchy(planned_hierarchy, observed_hierarchy)
+            result["scope_comparison"] = scope_result
+            if scope_result["decision"] == "SCOPE_CONFLICT":
+                result["state"] = "SCOPE_CONFLICT"; result["deviation"] = scope_result
+                result["requires_review"] = True
         existing = next((edge for edge in graph["edges"] if edge["source_id"] == planned_id and edge["relation"] == "design_reconciliation" and edge["attributes"].get("snapshot_id") == snapshot_id), None)
         if existing: return {"project_id": project_id, "planned_component_id": planned_id, "snapshot_id": snapshot_id, "tolerance": tolerance, "status": "idempotent", **existing["attributes"]}
         result["trace"]["planned_scope_id"] = planned_scope; result["trace"]["observed_scope_id"] = observed_scope
@@ -298,18 +306,21 @@ class BuildMeshService:
         persisted = self.store.add_match_decision_atomic(project_id, planned_id, observed["id"] if observed else planned_id, record, review, fail_after_decision, relation="design_reconciliation")
         return {"project_id": project_id, "planned_component_id": planned_id, "snapshot_id": snapshot_id, "tolerance": tolerance, "status": "created", **result, **persisted}
 
+    def compare_scope_hierarchy(self, planned: dict[str, Any], observed: dict[str, Any]) -> dict[str, Any]:
+        return compare_scope_hierarchy(planned, observed)
+
     def design_reality_timeline(self, project_id: str, planned_id: str) -> dict[str, Any]:
         """Expose immutable, persisted reconciliation history for one component."""
         graph = self.store.graph(project_id); planned = self.store.get_node(planned_id)
         if planned["project_id"] != project_id or planned["kind"] != "planned_component":
             raise ValueError("planned_id must identify a project planned component")
-        snapshots = {node["id"]: node for node in graph["nodes"] if node["kind"] == "twin_snapshot"}
+        snapshots = {node["id"]: node for node in graph["nodes"] if node["kind"] == "snapshot"}
         entries = []
         for edge in graph["edges"]:
             if edge["source_id"] != planned_id or edge["relation"] != "design_reconciliation": continue
             attrs, snapshot = edge["attributes"], snapshots.get(edge["attributes"]["snapshot_id"])
-            entries.append({"snapshot_id": attrs["snapshot_id"], "snapshot_label": snapshot["label"] if snapshot else None, "captured_at": (snapshot or {}).get("attributes", {}).get("captured_at"), "decision": attrs["trace"].get("match", {}).get("decision"), "state": attrs["state"], "deviation": attrs["deviation"], "evidence_ids": attrs["trace"].get("evidence_ids", []), "task_ids": attrs["trace"].get("task_ids", []), "review_required": attrs["requires_review"]})
-        return {"project_id": project_id, "planned_component_id": planned_id, "timeline": sorted(entries, key=lambda item: (item["captured_at"] or "", item["snapshot_id"]))}
+            entries.append({"snapshot_id": attrs["snapshot_id"], "snapshot_label": snapshot["label"] if snapshot else None, "captured_at": (snapshot or {}).get("attributes", {}).get("captured_at"), "decision": attrs["trace"].get("match", {}).get("decision"), "state": attrs["state"], "deviation": attrs["deviation"], "evidence_ids": attrs["trace"].get("evidence_ids", []), "task_ids": attrs["trace"].get("task_ids", []), "review_required": attrs["requires_review"], "_created_at": edge["created_at"]})
+        return {"project_id": project_id, "planned_component_id": planned_id, "timeline": [{key: value for key, value in item.items() if key != "_created_at"} for item in sorted(entries, key=lambda item: item["_created_at"])]}
 
     def twin_status(self, project_id: str, scope_id: str, snapshot_id: str) -> dict[str, Any]:
         return twin.completeness(self.store, project_id, scope_id, snapshot_id)
