@@ -560,3 +560,58 @@ requirements:
     implementation: src/buildmesh/environment.py:normalize
     verification: tests/test_environment.py::test_environmental_context_has_graph_provenance_and_fixture_discipline
     marker: implemented
+  - id: REQ-CAPTURE-001
+    title: Strict normalized spatial capture contract
+    status: IMPLEMENTED
+    implementation: src/buildmesh/spatial_capture.py:validate_capture
+    verification: tests/test_spatial_capture.py::test_spatial_capture_002_to_007_rejects_invalid_input_without_state
+  - id: REQ-CAPTURE-002
+    title: Capture provenance and immutable snapshot materialization
+    status: IMPLEMENTED
+    implementation: src/buildmesh/storage.py:ingest_spatial_capture_atomic
+    verification: tests/test_spatial_capture.py::test_spatial_capture_001_008_009_010_valid_capture_materializes_provenanced_snapshot; tests/test_spatial_capture.py::test_spatial_capture_011_preserves_historical_snapshots
+  - id: REQ-CAPTURE-003
+    title: Capture ingestion is idempotent and transactional
+    status: IMPLEMENTED
+    implementation: src/buildmesh/storage.py:ingest_spatial_capture_atomic
+    verification: tests/test_spatial_capture.py::test_spatial_capture_012_is_persisted_idempotently_across_three_submissions; tests/test_spatial_capture.py::test_spatial_capture_transaction_rolls_back_every_failure_point_and_retries
+  - id: REQ-CAPTURE-004
+    title: Capture observations feed existing design-reality reconciliation
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:ingest_spatial_capture
+    verification: tests/test_spatial_capture.py::test_spatial_capture_013_feeds_existing_design_reality_resolution
+  - id: REQ-EXTERNAL-001
+    title: Public visual source provenance is explicit
+    status: IMPLEMENTED
+    implementation: src/buildmesh/external_spatial.py:normalize_external_spatial
+    verification: EXTERNAL-001; EXTERNAL-002
+  - id: REQ-EXTERNAL-002
+    title: Derived spatial observations preserve unknown semantics
+    status: IMPLEMENTED
+    implementation: src/buildmesh/external_spatial.py:normalize_external_spatial
+    verification: EXTERNAL-003; EXTERNAL-007
+  - id: REQ-EXTERNAL-003
+    title: External spatial capture uses existing snapshot and twin pipeline
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:ingest_spatial_capture
+    verification: tests/test_external_spatial.py::test_external_001_to_007_provenance_normalization_snapshot_twin_and_graph
+  - id: REQ-EXTERNAL-004
+    title: Semantically insufficient external observations remain unknown
+    status: IMPLEMENTED
+    implementation: src/buildmesh/service.py:resolve_spatial_match
+    verification: EXTERNAL-004; tests/test_external_spatial.py::test_external_008_reconciliation_stops_at_unknown_semantic_boundary
+  - id: REQ-EXTERNAL-005
+    title: External capture submission is idempotent
+    status: IMPLEMENTED
+    implementation: src/buildmesh/storage.py:ingest_spatial_capture_atomic
+    verification: EXTERNAL-005; tests/test_external_spatial.py::test_external_009_three_identical_submissions_are_idempotent
+  - id: REQ-EXTERNAL-006
+    title: External capture transaction rolls back atomically
+    status: IMPLEMENTED
+    implementation: src/buildmesh/storage.py:ingest_spatial_capture_atomic
+    verification: EXTERNAL-006; tests/test_external_spatial.py::test_external_010_rollback_is_atomic_and_retries
+  - id: REQ-EXTERNAL-007
+    title: Physical RoomPlan remains distinct from external visual input
+    status: IMPLEMENTED
+    implementation: docs/buildmesh-spec/external-spatial-validation.md
+    verification: tests/test_external_spatial.py::test_external_012_end_to_end_is_not_fixture_or_roomplan

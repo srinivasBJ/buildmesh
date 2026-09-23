@@ -1,0 +1,34 @@
+{
+  "phase": "EXTERNAL_REAL_WORLD_SPATIAL_VALIDATION",
+  "fixture": false,
+  "input_classification": "REAL_PUBLIC_INPUT",
+  "output_classification": "DERIVED_SPATIAL_OUTPUT",
+  "physical_roomplan": "UNVERIFIED",
+  "construction_grade_reconstruction": "NOT_SUPPORTED",
+  "execution_environment": {
+    "host": "Apple M2",
+    "memory_bytes": 8589934592,
+    "gpu": "Apple M2, 8 cores, Metal 4",
+    "cuda": false,
+    "free_disk_gib_before_run": 63
+  },
+  "external_tool": {
+    "name": "PyCOLMAP",
+    "version": "4.2.0",
+    "execution": "local CPU",
+    "derived_by": "PyCOLMAP 4.2.0 CPU sparse reconstruction"
+  },
+  "research_references": {
+    "lingbot_map": {
+      "url": "https://github.com/Robbyant/lingbot-map",
+      "commit": "849e690bb086103637e44b1e91878d9d43a8bf0c",
+      "license": "Apache-2.0",
+      "local_execution": "not practical: documented CUDA PyTorch 2.8/CUDA 12.8 path; host has no CUDA"
+    },
+    "voxel_slam": {
+      "url": "https://github.com/hku-mars/Voxel-SLAM",
+      "license": "GPL-2.0",
+      "classification": "RESEARCH_REFERENCE_ONLY"
+    }
+  }
+}

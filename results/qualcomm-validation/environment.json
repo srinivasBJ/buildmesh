@@ -1,0 +1,40 @@
+{
+  "device": {
+    "attributes": [
+      "os:android",
+      "framework:tflite",
+      "framework:onnx",
+      "vendor:qualcomm",
+      "abi:aarch64-android",
+      "format:phone",
+      "chipset:qualcomm-snapdragon-8-elite-gen5",
+      "chipset:sm8850",
+      "hexagon:v81",
+      "soc-model:87",
+      "htp-supports-fp16:true",
+      "htp-supports-weight-sharing:true",
+      "framework:qnn"
+    ],
+    "name": "Snapdragon 8 Elite Gen 5 QRD",
+    "os": "16"
+  },
+  "frameworks": [
+    {
+      "api_version": "2.45",
+      "full_version": "2.45.0.260326154327",
+      "name": "QAIRT"
+    },
+    {
+      "api_version": "2.49",
+      "full_version": "2.49.0.260730134355",
+      "name": "QAIRT"
+    },
+    {
+      "api_version": "2.50",
+      "full_version": "2.50.0.260828221209",
+      "name": "QAIRT"
+    }
+  ],
+  "python": "3.13.15",
+  "qai_hub_version": "0.55.0"
+}

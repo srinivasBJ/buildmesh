@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="700" viewBox="0 0 1320 700" role="img" aria-labelledby="title description">
+  <title id="title">BuildMesh evidence-grounded operational architecture</title>
+  <desc id="description">Planned IFC state and observed evidence flow through an observed twin and reconciliation into bounded agents, risk, recommendation, human approval, action materialization, audit, project memory, and re-evaluation. A separate Qualcomm validation path provides validation evidence only.</desc>
+  <defs>
+    <style>
+      .bg { fill: #f8fafc; } .lane { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+      .node { fill: #ffffff; stroke: #334155; stroke-width: 1.5; rx: 8; } .evidence { fill: #ecfeff; stroke: #0f766e; stroke-width: 1.5; rx: 8; }
+      .action { fill: #fff7ed; stroke: #c2410c; stroke-width: 1.5; rx: 8; } .validation { fill: #f5f3ff; stroke: #6d28d9; stroke-width: 1.5; rx: 8; }
+      .label { font: 600 15px system-ui, sans-serif; fill: #0f172a; text-anchor: middle; } .small { font: 12px system-ui, sans-serif; fill: #475569; text-anchor: middle; }
+      .heading { font: 600 18px system-ui, sans-serif; fill: #0f172a; } .note { font: 12px system-ui, sans-serif; fill: #64748b; }
+      .arrow { stroke: #475569; stroke-width: 2; fill: none; marker-end: url(#arrow); } .dashed { stroke-dasharray: 6 5; }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker>
+  </defs>
+  <rect class="bg" width="1320" height="700"/>
+  <text class="heading" x="46" y="42">BuildMesh operational architecture</text>
+  <text class="note" x="46" y="64">Evidence-grounded state transitions with a separate hosted Qualcomm validation track</text>
+
+  <rect class="lane" x="28" y="90" width="876" height="556" rx="12"/>
+  <text class="heading" x="52" y="122">REAL BUILDMESH IMPLEMENTATION</text>
+
+  <rect class="node" x="60" y="150" width="170" height="72"/><text class="label" x="145" y="181">IFC / planned state</text><text class="small" x="145" y="202">file-hash provenance</text>
+  <rect class="evidence" x="278" y="150" width="170" height="72"/><text class="label" x="363" y="181">Evidence</text><text class="small" x="363" y="202">source, time, confidence</text>
+  <rect class="node" x="496" y="150" width="170" height="72"/><text class="label" x="581" y="181">Spatial / site observation</text><text class="small" x="581" y="202">bounded capture input</text>
+  <rect class="evidence" x="714" y="150" width="150" height="72"/><text class="label" x="789" y="181">Observed twin</text><text class="small" x="789" y="202">immutable snapshot</text>
+
+  <rect class="node" x="112" y="290" width="190" height="72"/><text class="label" x="207" y="320">Design–reality</text><text class="small" x="207" y="341">reconciliation</text>
+  <rect class="node" x="364" y="290" width="190" height="72"/><text class="label" x="459" y="320">Bounded specialist agents</text><text class="small" x="459" y="341">structured proposals</text>
+  <rect class="node" x="616" y="290" width="190" height="72"/><text class="label" x="711" y="320">Risk consolidation</text><text class="small" x="711" y="341">evidence references retained</text>
+
+  <rect class="node" x="112" y="430" width="190" height="72"/><text class="label" x="207" y="461">Recommendation</text><text class="small" x="207" y="482">reviewable proposal</text>
+  <rect class="action" x="364" y="430" width="190" height="72"/><text class="label" x="459" y="461">Human approval</text><text class="small" x="459" y="482">consequential boundary</text>
+  <rect class="action" x="616" y="430" width="190" height="72"/><text class="label" x="711" y="461">Action materialization</text><text class="small" x="711" y="482">exactly once</text>
+  <rect class="evidence" x="364" y="560" width="190" height="56"/><text class="label" x="459" y="585">Notification / audit</text><text class="small" x="459" y="604">event trace</text>
+  <rect class="evidence" x="616" y="560" width="190" height="56"/><text class="label" x="711" y="585">Persistent project memory</text><text class="small" x="711" y="604">re-evaluation input</text>
+
+  <path class="arrow" d="M230 186H278M448 186H496M666 186H714M789 222V255H207V290M207 362V430M302 326H364M554 326H616M711 362V430M302 466H364M554 466H616M711 502V532H711V560M616 588H554M459 560V532H207V502"/>
+  <path class="arrow dashed" d="M711 560V642H60V222"/>
+  <text class="note" x="68" y="635">re-evaluation from persisted evidence and action history</text>
+
+  <rect class="lane" x="934" y="90" width="356" height="556" rx="12"/>
+  <text class="heading" x="960" y="122">LIVE QUALCOMM VALIDATION</text>
+  <rect class="validation" x="970" y="150" width="284" height="58"/><text class="label" x="1112" y="176">BuildMesh-relevant model</text><text class="small" x="1112" y="195">MiDaS V2 validation input</text>
+  <rect class="validation" x="970" y="244" width="284" height="58"/><text class="label" x="1112" y="270">Qualcomm AI Hub</text><text class="small" x="1112" y="289">compile hosted target</text>
+  <rect class="validation" x="970" y="338" width="284" height="58"/><text class="label" x="1112" y="364">Profile + inference</text><text class="small" x="1112" y="383">Snapdragon hosted device</text>
+  <rect class="validation" x="970" y="432" width="284" height="58"/><text class="label" x="1112" y="458">Numerical comparison</text><text class="small" x="1112" y="477">against local reference</text>
+  <rect class="evidence" x="970" y="526" width="284" height="58"/><text class="label" x="1112" y="552">Validation evidence package</text><text class="small" x="1112" y="571">not operational project state</text>
+  <path class="arrow" d="M1112 208V244M1112 302V338M1112 396V432M1112 490V526"/>
+</svg>

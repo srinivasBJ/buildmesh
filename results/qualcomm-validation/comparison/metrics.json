@@ -1,0 +1,27 @@
+{
+  "element_count": 65536,
+  "mae": 1.5730767550703604,
+  "max_absolute_error": 5.3421630859375,
+  "normalized_rmse": 0.0019748687550816403,
+  "observed_shape": [
+    1,
+    1,
+    256,
+    256
+  ],
+  "passed": true,
+  "pearson_correlation": 0.9999956625156387,
+  "policy": {
+    "maximum_normalized_rmse": 0.01,
+    "minimum_pearson_correlation": 0.999,
+    "shape_must_match": true
+  },
+  "reference_shape": [
+    1,
+    1,
+    256,
+    256
+  ],
+  "rmse": 1.8346028813509376,
+  "shape_match": true
+}

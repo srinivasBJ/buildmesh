@@ -11,9 +11,14 @@
 | Spatial foundation | planned JSON → project graph → observed-twin comparison | `tests/test_spatial.py` |
 | Design-to-reality | snapshot-scoped matching, deviation/type/scope conflict, review provenance | `DESIGN-013`–`DESIGN-020`, `design-reality-demo`, `tests/test_ifc.py` |
 | Agentic operations | bounded specialists, risk consolidation, approval-gated actions, notifications, daily brief | `OPS-001`–`OPS-012`, `docs/buildmesh-spec/agentic-operations.md` |
+| Spatial capture | strict BuildMesh-owned capture contract → provenance → observed twin entities → immutable snapshot → existing reconciliation | `SPATIAL-CAPTURE-001`–`SPATIAL-CAPTURE-013`, `tests/test_spatial_capture.py`, `docs/buildmesh-spec/spatial-capture.md` |
 
 QNN/NPU execution remains unverified until `NPU_EXECUTED` evidence exists.
 
 Environmental fixture evidence is explicitly `FIXTURE`; Open-Meteo is the only current `LIVE` environmental path. Historical comparison is `HISTORICAL_NOT_FORECAST`; solar is `CALCULATED`; manual reports remain `MANUAL`. Provider gaps for historical climate, traffic, events, terrain, and soil are not represented as live integrations.
 
 Design-reality evidence is bounded and non-certifying. The four-snapshot apartment output uses the real rich IFC fixture and preserves historical records rather than rewriting prior decisions. Scope comparison reports the first explicit mismatch level when complete hierarchy IDs are supplied; missing levels remain `UNKNOWN`.
+
+Spatial-capture fixtures and manually supplied RoomPlan-style inputs are explicitly `FIXTURE`. BuildMesh owns the normalized contract and adapter; physical iPhone/iPad LiDAR capture remains `UNVERIFIED` until a supported device capture is validated. The adapter retains oriented bounding boxes and explicit containment only; it does not claim meshes, textures, sensor confidence, or advanced topology.
+
+External real-world spatial validation is distinct from RoomPlan/LiDAR validation. A CC BY 4.0 public TUM RGB-D sequence was locally processed into arbitrary-scale sparse scene bounds, persisted through the existing capture/twin path, and retained as semantic `UNKNOWN`; `EXTERNAL-001`–`EXTERNAL-007`, `tests/test_external_spatial.py`, and `results/external-spatial-validation/` retain the evidence. No public media, external source, or construction-grade reconstruction claim is included.

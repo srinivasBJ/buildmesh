@@ -1,0 +1,15 @@
+{
+  "job_id": "jgnzno2qg",
+  "output_dtype": "float32",
+  "output_sha256": "4bc5deb1ef7de678e2bcb368cfa0316ebe18de633d132cdf300f687c3985bbbb",
+  "output_shape": [
+    1,
+    1,
+    256,
+    256
+  ],
+  "source_output_name": "depth_estimates",
+  "status": "SUCCESS",
+  "target_output_name": "output_0",
+  "url": "https://workbench.aihub.qualcomm.com/jobs/jgnzno2qg/"
+}

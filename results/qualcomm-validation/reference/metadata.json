@@ -1,0 +1,16 @@
+{
+  "dtype": "float32",
+  "max": 943.2032470703125,
+  "mean": 515.518310546875,
+  "min": 14.228662490844727,
+  "output_name": "depth_estimates",
+  "runtime": "onnxruntime",
+  "runtime_version": "1.30.0",
+  "sha256_npz": "8212bb10dd8780f67de290fce2491570f1ea6baed47456f96690f2e2d5f80a07",
+  "shape": [
+    1,
+    1,
+    256,
+    256
+  ]
+}

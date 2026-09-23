@@ -8,11 +8,37 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .service import BuildMeshService
+from .external_spatial import normalize_external_spatial
 
 
 def _service(tmp: str) -> tuple[BuildMeshService, dict[str, Any]]:
     service = BuildMeshService(Path(tmp) / "scenario.db", Path(tmp) / "assets")
     return service, service.create_project("Scenario project")
+
+
+def _external_summary() -> dict[str, Any]:
+    return {"capture_id": "external-evaluator-tum-rgbd", "source_url": "https://cvg.cit.tum.de/rgbd/dataset/freiburg1/rgbd_dataset_freiburg1_xyz.tgz", "source_license": "CC-BY-4.0", "source_checksum": "sha256:a0236d97b8c30cd93b653656d2b6c293ff7c982a4130ef2a1a8beecdb124ef98", "source_captured_at": "UNKNOWN", "ingested_at": "2026-09-23T10:42:53Z", "dataset": "TUM RGB-D freiburg1_xyz", "device": "Microsoft Kinect (dataset documentation)", "frame_count": 798, "registered_images": 12, "points3d_count": 1783, "bounds_center": [-19.0886, -5.5305, 42.5194], "bounds_dimensions": [68.988, 35.018, 58.498], "derived_by": "PyCOLMAP 4.2.0 CPU sparse reconstruction", "fixture": False}
+
+
+def _external(tmp: str, mode: str) -> list[str]:
+    service, project = _service(tmp); capture = normalize_external_spatial(_external_summary())
+    if mode == "rollback":
+        before = len(service.store.graph(project["id"])["nodes"])
+        try: service.ingest_spatial_capture(project["id"], capture, fail_at="graph")
+        except RuntimeError: pass
+        return ["rollback has no partial nodes" if len(service.store.graph(project["id"])["nodes"]) == before else "missing rollback"]
+    result = service.ingest_spatial_capture(project["id"], capture); inspected = service.inspect_spatial_capture(project["id"], result["capture_id"])
+    if mode == "provenance": return ["public source retained" if inspected["capture"]["payload"]["source"].get("source_url") else "missing public source", "derived evidence retained" if inspected["capture"]["payload"]["source"].get("evidence_state") == "DERIVED" else "missing derived evidence"]
+    if mode == "materialize": return ["derived observation materialized" if len(inspected["entities"]) == 1 and inspected["snapshot"]["attributes"]["immutable"] else "missing materialization"]
+    if mode == "unknown": return ["unknown semantics preserved" if inspected["entities"][0]["attributes"].get("semantic_type") == "UNKNOWN" else "fabricated semantics"]
+    if mode == "duplicate":
+        second, third = service.ingest_spatial_capture(project["id"], capture), service.ingest_spatial_capture(project["id"], capture)
+        return ["duplicate capture idempotent" if second["status"] == third["status"] == "idempotent" else "missing idempotence"]
+    if mode == "reconcile":
+        planned = service.import_spatial_plan(project["id"], {"schema_version": "buildmesh-spatial-plan-v1", "source": {"reference": "controlled-plan", "fixture": True}, "entities": [{"id": "p", "kind": "opening", "label": "planned", "parent_id": None, "attributes": {"ifc_class": "IfcWindow"}, "geometry": None, "orientation": "UNKNOWN"}]})["entity_ids"][0]
+        outcome = service.resolve_spatial_match(project["id"], planned, result["snapshot_id"])
+        return ["semantic insufficiency remains unknown" if outcome["decision"] == "UNKNOWN" else "fabricated correspondence"]
+    return ["external sequence accepted" if result["status"] == "created" else "missing ingestion"]
 
 
 def _normal(tmp: str) -> list[str]:
@@ -350,6 +376,13 @@ SCENARIOS: dict[str, tuple[str, list[str], Callable[[str], list[str]]]] = {
     "OPS-010": ("duplicate approval", ["REQ-OPS-003", "REQ-OPS-004"], _ops_approval),
     "OPS-011": ("malformed agent output", ["REQ-OPS-007"], _ops_malformed),
     "OPS-012": ("closed loop operation", ["REQ-OPS-008"], _ops_closed_loop),
+    "EXTERNAL-001": ("public real-world sequence accepted", ["REQ-EXTERNAL-001"], lambda tmp: _external(tmp, "ingest")),
+    "EXTERNAL-002": ("derived provenance retained", ["REQ-EXTERNAL-002"], lambda tmp: _external(tmp, "provenance")),
+    "EXTERNAL-003": ("spatial observation materialized", ["REQ-EXTERNAL-003"], lambda tmp: _external(tmp, "materialize")),
+    "EXTERNAL-004": ("reconciliation preserves unknown", ["REQ-EXTERNAL-004"], lambda tmp: _external(tmp, "reconcile")),
+    "EXTERNAL-005": ("duplicate external ingestion", ["REQ-EXTERNAL-005"], lambda tmp: _external(tmp, "duplicate")),
+    "EXTERNAL-006": ("external ingestion rollback", ["REQ-EXTERNAL-006"], lambda tmp: _external(tmp, "rollback")),
+    "EXTERNAL-007": ("unknown semantic handling", ["REQ-EXTERNAL-007"], lambda tmp: _external(tmp, "unknown")),
 }
 
 

@@ -1,0 +1,26 @@
+{
+  "source_archive_bytes": 448204271,
+  "source_rgb_frames": 798,
+  "selected_reconstruction_frames": 12,
+  "registered_images": 12,
+  "sparse_points3d": 1783,
+  "mean_reprojection_error": 0.637518,
+  "scene_bounds": {
+    "center": [-19.088629573971566, -5.530474727709856, 42.51948381760361],
+    "dimensions": [68.98807205535998, 35.01844907889113, 58.498278144682],
+    "units": "arbitrary_scale"
+  },
+  "buildmesh_ingestion": {
+    "status": "created",
+    "entities": 1,
+    "snapshot_immutable": true,
+    "graph": {"contains": 7, "evidence_for": 3, "observes": 1},
+    "repeat_submission_statuses": ["idempotent", "idempotent"]
+  },
+  "observed_twin_entity": {
+    "source_entity_id": "sparse-scene-bounds",
+    "semantic_type": "UNKNOWN",
+    "fixture": false,
+    "confidence_state": "UNKNOWN"
+  }
+}

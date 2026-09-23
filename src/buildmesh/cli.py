@@ -287,6 +287,12 @@ def main() -> None:
     context_analyze_parser.add_argument("task_id")
     spatial_import_parser = commands.add_parser("spatial-import")
     spatial_import_parser.add_argument("project_id"); spatial_import_parser.add_argument("file")
+    spatial_capture_parser = commands.add_parser("spatial-capture")
+    spatial_capture_subcommands = spatial_capture_parser.add_subparsers(dest="spatial_capture_command", required=True)
+    spatial_capture_ingest = spatial_capture_subcommands.add_parser("ingest")
+    spatial_capture_ingest.add_argument("project_id"); spatial_capture_ingest.add_argument("file")
+    spatial_capture_inspect = spatial_capture_subcommands.add_parser("inspect")
+    spatial_capture_inspect.add_argument("project_id"); spatial_capture_inspect.add_argument("capture_id")
     ifc_import_parser = commands.add_parser("ifc-import"); ifc_import_parser.add_argument("project_id"); ifc_import_parser.add_argument("file")
     spatial_status_parser = commands.add_parser("spatial-status"); spatial_status_parser.add_argument("project_id")
     spatial_diff_parser = commands.add_parser("spatial-diff"); spatial_diff_parser.add_argument("project_id"); spatial_diff_parser.add_argument("planned_id"); spatial_diff_parser.add_argument("snapshot_id")
@@ -340,6 +346,12 @@ def main() -> None:
         print(json.dumps({"plan": service.environment_plan(args.project_id, args.task_id), "recommendations": service.openmesh.run(args.project_id)["recommendations"]}, indent=2))
     elif args.command == "spatial-import":
         print(json.dumps(BuildMeshService(args.database).import_spatial_plan(args.project_id, json.loads(Path(args.file).read_text())), indent=2))
+    elif args.command == "spatial-capture":
+        service = BuildMeshService(args.database)
+        if args.spatial_capture_command == "ingest":
+            print(json.dumps(service.ingest_spatial_capture(args.project_id, json.loads(Path(args.file).read_text())), indent=2))
+        else:
+            print(json.dumps(service.inspect_spatial_capture(args.project_id, args.capture_id), indent=2))
     elif args.command == "ifc-import":
         print(json.dumps(BuildMeshService(args.database).import_ifc(args.project_id, args.file), indent=2))
     elif args.command == "spatial-status":
@@ -356,3 +368,7 @@ def main() -> None:
         import uvicorn
         from .api import create_app
         uvicorn.run(create_app(args.database), host=args.host, port=args.port)
+
+
+if __name__ == "__main__":
+    main()

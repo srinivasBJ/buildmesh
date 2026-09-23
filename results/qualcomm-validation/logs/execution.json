@@ -1,0 +1,6 @@
+{
+  "compile": "SUCCESS",
+  "credential_policy": "No credential was read, serialized, or written by this collector.",
+  "inference": "SUCCESS",
+  "profile": "SUCCESS"
+}

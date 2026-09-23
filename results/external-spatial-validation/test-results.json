@@ -1,0 +1,32 @@
+{
+  "command": "PYTHONPATH=src .venv/bin/pytest -q",
+  "result": "113 passed, 5 warnings",
+  "warnings": "Two FastAPI/Starlette deprecation warnings and three IfcOpenShell deallocator warnings from existing dependency behavior.",
+  "external_direct_tests": {
+    "file": "tests/test_external_spatial.py",
+    "result": "12 passed",
+    "coverage": [
+      "EXTERNAL-001 source provenance",
+      "EXTERNAL-002 external sequence ingestion",
+      "EXTERNAL-003 normalized spatial representation",
+      "EXTERNAL-004 evidence derivation metadata",
+      "EXTERNAL-005 snapshot creation",
+      "EXTERNAL-006 twin materialization",
+      "EXTERNAL-007 graph linkage",
+      "EXTERNAL-008 reconciliation",
+      "EXTERNAL-009 three-run idempotence",
+      "EXTERNAL-010 rollback",
+      "EXTERNAL-011 UNKNOWN semantic handling",
+      "EXTERNAL-012 end-to-end external spatial flow"
+    ]
+  },
+  "evaluator": {
+    "command": "PYTHONPATH=src .venv/bin/buildmesh evaluate --scenario all --json",
+    "scenario_count": 115,
+    "passed": 115,
+    "failed": 0,
+    "partial": 0,
+    "external_scenarios": ["EXTERNAL-001", "EXTERNAL-002", "EXTERNAL-003", "EXTERNAL-004", "EXTERNAL-005", "EXTERNAL-006", "EXTERNAL-007"]
+  },
+  "additional_checks": ["compileall PASS", "buildmesh --help PASS", "git diff --check PASS"]
+}

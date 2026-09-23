@@ -1,0 +1,10 @@
+{
+  "artifact_sha256": "96048d4bc1fd0896bf8033813dae7d1b614846e9b84cdc2b6cc023b89c9da323",
+  "asset_precision": "float",
+  "asset_qairt_version": "2.50.0.260828221209",
+  "asset_runtime": "onnx",
+  "catalog_id": "midas",
+  "data_sha256": "7c9778d43ab470e297b2ca68ac0d34a06c7145cc6d999148d3d0236a9deed1bc",
+  "name": "Midas-V2",
+  "onnx_sha256": "f6095c2fa52d8f59c8b4d000d1ecf546ce7c2339ee66471c732ac678b0d3b672"
+}

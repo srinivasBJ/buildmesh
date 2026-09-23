@@ -1,217 +1,174 @@
 # BuildMesh
 
-BuildMesh is a local-first construction intelligence backend. It turns project updates, site evidence, and optional external context into an auditable project graph. Its OpenMesh runtime coordinates small, bounded agents that recommend actions; people approve consequential actions before anything changes.
+BuildMesh is a bounded construction intelligence layer that connects planned BIM/IFC state, observed reality, evidence, project risk, and human-approved operational actions. It is an auditable backend: inputs and model outputs are evidence, agents make structured proposals, and consequential changes require human approval.
 
-The v0.1 vertical slice proves this loop:
+![BuildMesh evidence-grounded operational architecture](docs/assets/buildmesh-architecture.svg)
 
-`observe -> reconcile -> assess risk -> recommend -> approve -> act -> remember`
+## What BuildMesh Does
 
-It is designed to be deployable on Snapdragon-powered Windows PCs. The repository includes a provider boundary for Qualcomm QNN / ONNX Runtime; no performance number is claimed until measured on target hardware.
+BuildMesh receives project updates, documents, site observations, and bounded external context; stores provenance in a SQLite project graph; reconciles planned and observed state; then produces evidence-backed recommendations. An approved recommendation can materialize one task/action atomically and retain its audit trail for later re-evaluation.
 
-## What is included
+It does not claim autonomous construction management, engineering approval, safety certification, or complete digital-twin reconstruction.
 
-- SQLite-backed project graph: projects, nodes, edges, events, evidence, recommendations, approvals, tasks, and agent-run provenance.
-- OpenMesh orchestrator: document signals, verified plan prerequisites, task dependencies, project-state and material reconciliation, schedule-variance assessment, risk assessment, and recommendation creation.
-- Human approval gate: recommendations cannot create tasks until explicitly approved.
-- Project accountability: role-bearing project members, task assignments, reviewer-candidate resolution, and deterministic assignment of an approved action when exactly one member matches its role.
-- Local evidence intake: multipart image and document uploads, SHA-256 hashes, file-signature checks, PDF/text extraction, and project-scoped local storage.
-- Live external context: Open-Meteo forecast retrieval from project coordinates, with the provider payload preserved as evidence.
-- Snapdragon Edge Intelligence: explicit QNN/NPU or CPU development backend selection, strict detection/segmentation validation, runtime provenance, device identity, repeatable local benchmarks, and source-to-recommendation graph lineage.
-- Operational outputs: structured daily intelligence reports and an opt-in SMTP reviewer-notification adapter.
+## Why This Matters
 
-## Runtime architecture
+Construction decisions become difficult to audit when plans, observations, model outputs, and operational actions are disconnected. BuildMesh makes the links explicit: an observation is not accepted as project truth without provenance, a recommendation names its evidence, and a proposed action cannot bypass review.
+
+## Architecture
+
+The architecture diagram separates the operational core from the hosted Qualcomm validation path. Qualcomm validation supplies **validation evidence only**; it does not become authoritative project state or replace the local QNN deployment boundary.
+
+## What We Actually Built
+
+| Capability | BuildMesh status |
+| --- | --- |
+| IFC ingestion with source-hash provenance | **REAL BUILDMESH IMPLEMENTATION** |
+| Evidence/provenance graph and immutable observed snapshots | **REAL BUILDMESH IMPLEMENTATION** |
+| Observed twin and design–reality reconciliation | **REAL BUILDMESH IMPLEMENTATION** |
+| Spatial capture adapter | **REAL BUILDMESH IMPLEMENTATION** |
+| External real-world spatial validation | **REAL PUBLIC INPUT** + **DERIVED SPATIAL OUTPUT** |
+| Bounded specialist agents, risk consolidation, recommendation | **REAL BUILDMESH IMPLEMENTATION** |
+| Human approval and exactly-once action materialization | **REAL BUILDMESH IMPLEMENTATION** |
+| Qualcomm AI Hub MiDaS validation | **LIVE QUALCOMM VALIDATION** |
+| Deterministic demos and RoomPlan-style inputs | **SYNTHETIC FIXTURE** |
+| Physical Apple RoomPlan capture | **UNVERIFIED** |
+| Construction-grade reconstruction or engineering certification | **UNSUPPORTED** |
+
+## End-to-End Flow
 
 ```text
-Site image / document / worker update       Open-Meteo forecast
-                 |                                  |
-                 +--------- evidence store ----------+
-                                      |
-                              SQLite project graph
-                                      |
-                  OpenMesh bounded agent pipeline
-  document + plan + state + schedule + material + dependency agents -> risk assessment -> recommendation
-                                      |
-                           human review / approval
-                                      |
-                   task materialization + event trace
-                                      |
-                  daily report / optional SMTP notice
+planned IFC / project state + evidence / observation
+  -> provenance-preserving project graph
+  -> observed snapshot and design–reality reconciliation
+  -> bounded specialist agents and risk consolidation
+  -> recommendation -> human approval -> exactly-once action -> audit -> re-evaluation
 ```
 
-Every model, file, or external-provider output is treated as data, not instruction. The API stores provenance before agents use it; recommendations name their supporting evidence; task creation is blocked until an identified reviewer approves.
+Agent outputs are data, not instructions. The API validates untrusted model/provider output before it becomes evidence; recommendations retain supporting evidence; approved actions are persisted atomically and idempotently.
 
-## Quick start
+## Real-World Validation
+
+**REAL PUBLIC INPUT:** the external spatial validation uses a public TUM RGB-D `freiburg1_xyz` sequence. The original media is not committed.
+
+**DERIVED SPATIAL OUTPUT:** a local PyCOLMAP run produced an arbitrary-scale, semantic-`UNKNOWN` sparse-scene bounds observation. It was ingested through the existing evidence → observed snapshot → twin → reconciliation path. This does not claim LiDAR capture, Apple RoomPlan, semantic construction reconstruction, or engineering accuracy.
+
+Read the evidence: [External Spatial Validation](results/external-spatial-validation/README.md) · [Spatial Capture Specification](docs/buildmesh-spec/spatial-capture.md).
+
+## Qualcomm AI Hub Validation
+
+**LIVE QUALCOMM VALIDATION:** a BuildMesh-relevant depth model, MiDaS V2 / MiDaS_small, was compiled, profiled, and inferred through Qualcomm AI Hub on a hosted Snapdragon 8 Elite Gen 5 QRD (Android 16). The catalog-compatible asset records QAIRT `2.50.0.260828221209`; AI Hub produced a TFLite target. This validation model does not replace the repository's separately documented local YOLO/QNN deployment target.
+
+| Stage | Result | Evidence |
+| --- | --- | --- |
+| Compilation | PASS | [`jpe7z89v5`](https://workbench.aihub.qualcomm.com/jobs/jpe7z89v5/) |
+| Profiling | PASS | [`jpxl43vlp`](https://workbench.aihub.qualcomm.com/jobs/jpxl43vlp/) |
+| Hosted inference | PASS | [`jgnzno2qg`](https://workbench.aihub.qualcomm.com/jobs/jgnzno2qg/) |
+| Numerical validation | PASS | shape match; correlation and normalized-RMSE gates passed |
+
+The reference and hosted output were both float32 `[1,1,256,256]` depth tensors for the same TUM RGB frame. The acceptance policy was fixed before evaluation: equal shape, Pearson correlation >= `0.999`, and normalized RMSE <= `0.01`.
+
+![Qualcomm AI Hub profile metrics](results/qualcomm-validation/figures/profile-metrics.svg)
+
+![Reference versus Qualcomm numerical validation](results/qualcomm-validation/figures/numerical-validation.svg)
+
+Detailed evidence: [Qualcomm Validation](results/qualcomm-validation/README.md) · [Methodology](docs/qualcomm/methodology.md) · [Implementation](docs/qualcomm/implementation.md) · [Model selection](docs/qualcomm/model-selection.md).
+
+## Results At A Glance
+
+| Measurement | Observed value |
+| --- | --- |
+| Qualcomm estimated inference time | 1.241 ms |
+| First app load | 886.925 ms |
+| Subsequent app load | 95.899 ms |
+| Profile compute unit | NPU (returned operator detail) |
+| Pearson correlation | 0.99999566 |
+| Normalized RMSE | 0.00197487 |
+| MAE / maximum absolute error | 1.5730768 / 5.3421631 |
+
+These are measurements from one hosted AI Hub profile/inference run, not an end-to-end BuildMesh benchmark, speedup claim, or accuracy percentage. The source values, raw profile artifact, checksums, job IDs, and comparison policy are in [the validation package](results/qualcomm-validation/summary.json).
+
+## Test Coverage
+
+Current repository verification snapshot:
+
+| Verification class | Current result |
+| --- | --- |
+| Unit/integration pytest suite | 118 passed |
+| External spatial + Qualcomm offline tests | 15 collected (10 external spatial, 5 Qualcomm) |
+| Evaluator scenarios | 10 total: 9 PASS, 1 PARTIAL, 0 failed |
+| Live Qualcomm jobs | compile, profile, inference: all SUCCESS; QAI-001–QAI-010 PASS |
+| Spec status | 98 IMPLEMENTED, 4 PARTIAL, 1 UNVERIFIED, 1 PLANNED |
+
+The evaluator's one PARTIAL scenario is existing stale-context coverage; it is not reported as a pass. Live Qualcomm jobs are deliberately separate from ordinary pytest and require private AI Hub credentials only when re-running the live workflow.
+
+## Evidence & Reproducibility
+
+- [External Spatial Validation](results/external-spatial-validation/README.md) — public input provenance and derived-output boundaries.
+- [Qualcomm Validation](results/qualcomm-validation/README.md) — structured live-job evidence, profile artifact, comparison, and limitations.
+- [Qualcomm methodology](docs/qualcomm/methodology.md) and [implementation](docs/qualcomm/implementation.md) — reproducible credential-safe workflow.
+- [Agentic Operations](docs/buildmesh-spec/agentic-operations.md) — bounded recommendation and approval behavior.
+- `scripts/generate_readme_figures.py` deterministically regenerates both README charts from the recorded summary and profile artifacts; it fails if they disagree or are incomplete.
+
+No Qualcomm credential, TUM image, model binary, or inference tensor is stored in the repository.
+
+## Technical Differentiation
+
+Individual ingredients already exist across BIM/IFC systems, digital twins, reality capture, construction AI progress monitoring, knowledge graphs, risk analysis, and agentic workflows. BuildMesh should not be evaluated on a claim that these ideas are individually unprecedented.
+
+Its concrete contribution is the engineered integration and verification of those capabilities into one bounded, evidence-grounded operational architecture:
+
+- Evidence-grounded state transitions: planned state → observed state → reconciliation → operational proposal.
+- Provenance-preserving reasoning: agents retain evidence references rather than assert unsupported conclusions.
+- Bounded agents: structured proposals cannot bypass trusted persistence or human approval.
+- Governance boundary: recommendations are distinct from consequential action.
+- Exactly-once action materialization: approved actions are persisted idempotently.
+- Persistent operational memory: actions and evidence feed later re-evaluation.
+- Spatial-to-operational bridge: spatial evidence can inform reconciliation, risk, recommendations, and workflows rather than remaining an isolated visualization.
+- Hardware evidence: a relevant model was actually compiled, profiled, and inferred on a hosted Qualcomm device with numerical reference comparison.
+
+## Existing Landscape
+
+Related work and products already cover AI + BIM progress monitoring, construction digital twins, multi-agent BIM/digital-twin research, knowledge-graph planning, reality-capture monitoring, and robot-ready construction twins. BuildMesh should therefore be evaluated on its concrete architecture, implementation, evidence model, governance boundaries, reproducibility, and validation results rather than on a claim that these concepts are individually unprecedented.
+
+## Limitations
+
+- **UNVERIFIED:** physical iPhone/iPad LiDAR / Apple RoomPlan capture has not been demonstrated.
+- **UNSUPPORTED:** no construction-grade reconstruction, semantic construction twin, engineering certification, or safety claim is made.
+- **UNVERIFIED:** the local Windows Snapdragon QNN deployment path has implementation and evidence gates, but this repository does not present a local target-device benchmark.
+- The hosted Qualcomm values are single-run validation evidence, not a product-wide performance or accuracy comparison.
+- CAD/BIM geometry-engine behavior, production access control, and additional production data/model validation remain future work.
+
+## Quick Start
 
 ```bash
+git clone <repository-url>
 cd buildmesh
 python -m venv .venv
-. .venv/bin/activate
+. .venv/bin/activate                  # Windows: .venv\Scripts\activate
 pip install '.[dev]'
+pytest -q
+buildmesh evaluate --scenario all --json
 buildmesh --database ./buildmesh.db demo
 buildmesh --database ./buildmesh.db serve
 ```
 
-Open `http://127.0.0.1:8000` for the local BuildMesh workspace or `http://127.0.0.1:8000/docs` for the API. On Windows, activate the environment with `.venv\\Scripts\\activate`.
+Open `http://127.0.0.1:8000` for the local workspace or `http://127.0.0.1:8000/docs` for the API. Inspect `results/` without any external credentials. Re-running live Qualcomm validation is optional and requires an already configured AI Hub account; offline evidence checks do not.
 
-Environmental intelligence is evidence-first: normalized Open-Meteo forecasts may be `LIVE`; deterministic demos are `FIXTURE`; solar is `CALCULATED`; reports may be `MANUAL`; aggregate climate is `HISTORICAL`, never a forecast. `UNKNOWN`, `STALE`, and `CONFLICTING` remain distinct and request review rather than silently claiming safety. Run `buildmesh evaluate --scenario all --json` to execute the core and `ENV-001`–`ENV-010` behavioral suites.
+For the optional local Snapdragon/QNN target, see [qualcomm-deployment.json](src/buildmesh/qualcomm-deployment.json). The runtime refuses to claim NPU execution when QNN/device evidence is unavailable.
 
-IFC support uses the real local IfcOpenShell parser: `buildmesh ifc-import <project-id> <file.ifc>` normalizes supported IFC2X3/accepted-schema entities into planned spatial state with file-hash provenance. It is not a CAD editor, IFC geometry engine, or engineering-certification workflow.
-
-Planned↔observed correspondence is snapshot-scoped and uses verified IFC identity, validated planned-evidence snapshot lineage, or bounded IFC-placement distance. Ambiguous candidates remain reviewable conflicts; they are never auto-selected.
-
-Design reality reconciliation compares planned IFC components with independently observed snapshots. It preserves `MATCHED`, `SPATIAL_DEVIATION`, `TYPE_CONFLICT`, `SCOPE_CONFLICT`, `NOT_OBSERVED`, and `UNKNOWN` states, task/review provenance, and immutable snapshot history. Run `design-reality-demo` for the deterministic four-snapshot apartment fixture. The demo is fixture evidence only; this project does not claim full 3D reconstruction or engineering certification.
-
-Phase 6 adds bounded, evidence-grounded, human-approved operations: specialist schedule/material/risk agents, recovery alternatives, escalation classification, idempotent notifications, approval-gated action materialization, and a daily project brief. It does not claim autonomous construction management.
-
-For a local container runtime:
-
-```bash
-docker compose up --build
-```
-
-## Demonstrate the product loop
-
-```bash
-# Creates a repeatable project, active Foundation F-12 excavation task, progress, and weather context.
-buildmesh --database ./buildmesh.db demo
-
-# Reset the same database/assets back to that exact initial state. With a QNN or CPU
-# backend configured, pass a real construction-site image to include local perception.
-buildmesh --database ./buildmesh.db demo-reset --site-image ./fixtures/foundation-access.jpg
-
-# Inspect the result.
-curl http://127.0.0.1:8000/projects
-curl http://127.0.0.1:8000/projects/<project-id>/graph
-
-# Human approval unlocks the derived task.
-curl -X POST http://127.0.0.1:8000/recommendations/<recommendation-id>/approve \
-  -H 'content-type: application/json' \
-  -d '{"reviewer":"site.engineer@example.com","decision":"approved","comment":"Move waterproofing before forecast rain."}'
-```
-
-## API flow
-
-1. `POST /projects` creates a project and its graph root.
-2. `POST /projects/{id}/tasks` creates scoped work such as `Foundation F-12`.
-3. `POST /projects/{id}/members` records active project members and roles; `/tasks/{task_id}/assign` records a task assignment.
-4. `POST /projects/{id}/tasks/{task_id}/dependencies` creates an acyclic dependency on a prerequisite task; `/status` records an auditable task-state transition.
-5. `POST /projects/{id}/updates` ingests a human progress report and its quantities.
-6. `POST /projects/{id}/assets/images` and `/assets/documents` persist project-scoped local evidence.
-7. `POST /projects/{id}/assets/images/{evidence_id}/analyze` invokes the configured local vision provider.
-8. `POST /projects/{id}/context/weather/refresh` gets a live forecast when project metadata contains `latitude` and `longitude`; `/context/traffic` records sampled congestion windows, while `/context` accepts typed soil, CAD, and environmental context and `/context/schedule` records task-scoped planned progress and remaining days.
-9. `POST /projects/{id}/plan-prerequisites` records a verified quote from an uploaded document that connects a predecessor and dependent task. It does not parse or certify CAD/BIM semantics.
-10. `POST /projects/{id}/edges` connects graph nodes, for example a task to a structural element or evidence to a work package.
-11. `POST /projects/{id}/orchestrate` runs the bounded agents and stores evidence-backed recommendations.
-12. `POST /projects/{id}/ask` answers bounded risk, progress, and history questions directly from evidence. A local language model can be configured only through the validated `BUILDMESH_LLM_COMMAND` contract.
-13. `POST /recommendations/{id}/approve` records a reviewer decision atomically. An approved recommendation materializes exactly one proposed task and assigns it when one active project member matches its proposed role.
-14. `GET /projects/{id}/reports/daily` returns a traceable report payload; `POST /recommendations/{id}/notify-reviewer` uses SMTP only if explicitly configured.
-
-## Snapdragon / Qualcomm AI Hub
-
-BuildMesh's competition-targeted model is **Qualcomm AI Hub YOLOv11-Detection**. The AI Hub model recipe documents YOLOv11 detection and its Ultralytics license dependency; its source weights are not redistributable with this repository. The intended Windows deployment is an AI Hub-exported ONNX model using `QNNExecutionProvider` on the NPU. Standard YOLOv11 detection input is configured at **640×640** by default (`BUILDMESH_QNN_INPUT_SIZE`), and its model output is decoded into boxes/classes locally. The selected detection model provides boxes; the evidence contract also accepts independently produced segmentation regions, so a selected AI Hub segmentation runner can feed the same graph without changing BuildMesh agents.
+## Repository Structure
 
 ```text
-site image -> ONNX Runtime / QNNExecutionProvider -> validated detections + segments
-          -> site_observation evidence -> project graph -> bounded OpenMesh agents
-          -> grounded recommendation -> human approval -> task/action audit trail
+src/buildmesh/                       application and bounded-agent runtime
+tests/                               unit, integration, spatial, and offline validation tests
+docs/buildmesh-spec/                 architecture and behavior specifications
+docs/qualcomm/                       AI Hub implementation and methodology
+docs/assets/                         BuildMesh-owned architecture SVG
+results/external-spatial-validation/ public-input/derived-output evidence
+results/qualcomm-validation/         live Qualcomm evidence and generated figures
+scripts/                             reproducible validation and figure generators
 ```
 
-The app has two explicit backends:
+## License
 
-```powershell
-# Competition target: Windows on a Snapdragon X Elite/X2 machine.
-# Use AMD64 Python as required by Qualcomm's AI Hub Models tooling.
-pip install ".[snapdragon]"
-$env:VISION_BACKEND = "qnn"
-$env:BUILDMESH_QNN_MODEL = "C:\\models\\yolov11-detection-qnn.onnx"
-$env:BUILDMESH_QNN_MODEL_ID = "YOLOv11-Detection"
-$env:BUILDMESH_QNN_MODEL_VERSION = "<AI-Hub-export-or-build-version>"
-$env:BUILDMESH_QNN_BACKEND_PATH = "C:\\Qualcomm\\QAIRT\\lib\\x86_64-windows-msvc\\QnnHtp.dll"
-$env:BUILDMESH_QNN_COMMAND = "python -m buildmesh.qnn_runner"
-buildmesh --database .\\buildmesh.db demo-reset --site-image .\\fixtures\\foundation-access.jpg
-
-# Development fallback only. It always records cpu/development_cpu rather than NPU.
-pip install ".[vision]"
-$env:VISION_BACKEND = "cpu"
-$env:BUILDMESH_ULTRALYTICS_WEIGHTS = "C:\\models\\yolo11n.pt"
-```
-
-`buildmesh.qnn_runner` creates an ONNX Runtime session with `QNNExecutionProvider` and refuses to emit a result when that provider is unavailable; it does not silently use CPU. It emits a versioned JSON contract containing model/version, execution provider and target, locally observed device identity, preprocessing/inference/postprocessing/total timings, boxes, and optional segmentation regions. BuildMesh rejects unexpected fields, unsupported labels, malformed boxes, invalid confidence/area, inconsistent QNN/CPU claims, and timing that does not add up. A model observation is *perception*, not a structural, soil, concrete, safety, or compliance certification.
-
-Use the API to benchmark a real image after configuring the backend:
-
-```bash
-curl http://127.0.0.1:8000/edge/status
-curl -X POST http://127.0.0.1:8000/projects/<project-id>/assets/images/<image-evidence-id>/benchmark \
-  -H 'content-type: application/json' -d '{"repetitions":20}'
-```
-
-The benchmark persists cold-start, warm-up, repeated p50/p95/mean latency and throughput as `perception_benchmark` evidence. Power and memory are explicitly `not measured`; no figures are fabricated. `qualcomm_reference` is a separate nullable field and is never populated from a local result. Run this benchmark on the actual submission machine before presenting a hardware claim. `GET /edge/status` says `device_identity: "unknown"` when the host cannot locally establish Qualcomm/Snapdragon identity.
-
-Qualcomm AI Hub documents supported deployment through ONNX Runtime and Qualcomm AI Engine Direct, plus on-device profiling (latency, memory and compute-unit utilization). Its model collection lists YOLOv11 detection, YOLOv11 segmentation, Snapdragon X Elite/X2 target devices, and Windows ONNX support: [AI Hub documentation](https://app.aihub.qualcomm.com/docs/index.html), [AI Hub Models](https://github.com/qualcomm/ai-hub-models), and [YOLOv11 model recipe and licensing](https://github.com/qualcomm/ai-hub-models/blob/main/src/qai_hub_models/models/yolov11_det/README.md).
-
-### Running BuildMesh on Snapdragon
-
-Use a supported Snapdragon Windows PC, AMD64 Python, Qualcomm AI Runtime/QNN libraries, and an AI Hub-exported YOLOv11 ONNX model. Set `VISION_BACKEND=qnn`; BuildMesh will not change to CPU if QNN initialization, model loading, provider selection, shape validation, or inference fails. CPU is available only through the explicit `VISION_BACKEND=cpu` choice.
-
-```powershell
-# From the checked-out repository on the target PC.
-pip install ".[dev,snapdragon]"
-$env:VISION_BACKEND = "qnn"
-$env:BUILDMESH_QNN_MODEL = "C:\\models\\yolov11-detection-qnn.onnx"
-$env:BUILDMESH_QNN_COMMAND = "python -m buildmesh.qnn_runner"
-buildmesh --database .\\competition.db competition-verify `
-  --site-image .\\fixtures\\foundation-access.jpg `
-  --output .\\competition-evidence --repetitions 20 `
-  --cpu-weights C:\\models\\yolo11n.pt --run-tests
-```
-
-The command first restores the demo baseline, then attempts the actual image → QNN → evidence → graph → agent → recommendation → approval flow. Its evidence directory contains `competition-report.json`, `hardware.json`, graph/timeline lineage, and, on success, observation/benchmark/recommendation/approval records. Supplying `--cpu-weights` additionally writes `cpu-comparison.json` from the same fixture; without it comparison is explicitly `not_available`. It records `VERIFIED` only when the returned result says `backend: qnn` and `execution_target: npu`; otherwise it is `UNVERIFIED` and preserves the failure diagnostic. It detects Windows manufacturer/model when available, otherwise uses `unknown`.
-
-Troubleshooting: a missing QNN runtime or provider, invalid model, incompatible model shape, malformed runner output, timeout, or unknown device identity is a failed/unverified run—not a CPU fallback. Check the package's `competition-report.json`, verify `QNNExecutionProvider` can initialize, then rerun. The published Qualcomm reference source is [YOLOv11-Detection on AI Hub](https://aihub.qualcomm.com/models/yolov11_det); its reference data must remain separate from the locally measured `benchmark.json` values.
-
-### Qualcomm validation manifest and evidence
-
-[qualcomm-deployment.json](src/buildmesh/qualcomm-deployment.json) is the versioned target-architecture manifest: YOLOv11-Detection / YOLO11-N, `[1,3,640,640]`, ONNX Runtime, `QNNExecutionProvider`, Windows, and the Qualcomm-published Snapdragon X Elite, X Plus 8-Core, and X2 Elite target families. It is not a local hardware-validation record.
-
-`GET /edge/qnn-readiness` and the competition package expose an evidence-gated state machine: `NOT_AVAILABLE → CONFIGURED → MODEL_AVAILABLE → QNN_AVAILABLE → DEVICE_VERIFIED → NPU_EXECUTED → BENCHMARK_COMPLETE`. A transition requires its preceding state and local evidence; macOS configuration can never report `NPU_EXECUTED`.
-
-AI Hub prepares, validates, and profiles model deployments on hosted devices. QNN is the local Snapdragon runtime. BuildMesh is the application layer that turns its validated output into evidence, graph lineage, recommendations, and human-approved actions. The architecture is:
-
-```text
-Input image -> BuildMesh VisionEngine -> ONNX Runtime -> QNNExecutionProvider
--> Snapdragon NPU -> validated observation -> evidence -> project graph
--> OpenMesh agents -> grounded recommendation -> human approval -> action
-```
-
-For a hosted Qualcomm AI Hub result, preserve the provider response as JSON and import it explicitly:
-
-```bash
-buildmesh --database ./competition.db import-qualcomm-result <project-id> ./ai-hub-result.json
-```
-
-The importer requires job ID, target device, model, runtime, compute unit, positive latency, HTTPS source URL, and completion time. It stores `qualcomm_reference` evidence with `measurement_origin: qualcomm_hosted_device`; it is never treated as a BuildMesh local measurement or used to calculate a speedup unless an operator establishes comparability.
-
-For coordinates, BuildMesh queries Open-Meteo's forecast endpoint for hourly precipitation probability and preserves the raw source payload. Open-Meteo documents the coordinate-based hourly forecast interface and precipitation-probability semantics [here](https://open-meteo.com/en/docs).
-
-## Design constraints
-
-- Recommendations are not engineering approvals.
-- External facts retain source, capture time, and confidence.
-- Agent runs retain input and output hashes for auditability.
-- A project update is reconciled against planned quantity when available; conflicts become review-required findings, never silent changes.
-- Sensitive evidence stays local by default; external APIs are used only for data that is inherently external, such as weather or traffic.
-- Traffic-window recommendations are comparisons of supplied observations, not traffic forecasts; road controls remain subject to human review.
-- SMTP is disabled until `BUILDMESH_SMTP_HOST` and `BUILDMESH_SMTP_SENDER` are set. Credentials are environment-only; they are never stored in the graph.
-
-## Repository layout
-
-```text
-src/buildmesh/     application package
-tests/             unit and workflow tests
-output/pdf/        pitch deck PDF
-```
-
-## Status
-
-This is an MVP backend, not a safety-certified construction system. CAD/BIM geometry parsing, production access control, construction-specific model validation, full segmentation model deployment, traffic-provider credentials, and target-device QNN benchmarking remain required before a real construction deployment. Plan-text prerequisites are verified only against the uploaded text and always require human review before action.
+BuildMesh is licensed under the [MIT License](LICENSE).

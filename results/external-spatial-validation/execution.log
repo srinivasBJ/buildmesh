@@ -1,0 +1,7 @@
+2026-09-23: Installed PyCOLMAP 4.2.0 arm64 wheel into the local BuildMesh virtual environment.
+2026-09-23: Downloaded TUM RGB-D freiburg1_xyz archive outside the repository; SHA-256 verified.
+2026-09-23: Extracted 798 RGB frames outside the repository; selected 12 640x480 frames at regular intervals.
+2026-09-23: Ran CPU SIFT extraction, exhaustive matching, and incremental mapping with PyCOLMAP 4.2.0.
+2026-09-23: Actual output: 12 registered images, 1783 sparse 3D points, mean reprojection error 0.637518.
+2026-09-23: Normalized and ingested through BuildMesh production spatial capture path; one immutable snapshot and one UNKNOWN-semantic observed component created.
+2026-09-23: Repeated identical submission twice; both returned idempotent. Controlled planned IfcWindow comparison returned UNKNOWN; no operation was created.

@@ -1,0 +1,41 @@
+{
+  "capture_id": "external_tum_rgbd_freiburg1_xyz_pycolmap_20260923",
+  "captured_at": "2026-09-23T10:42:53+00:00",
+  "coordinate_frame": {
+    "units": "arbitrary_scale",
+    "axis": "colmap-world-unknown-up"
+  },
+  "source": {
+    "kind": "external_visual",
+    "device": "Microsoft Kinect (dataset documentation)",
+    "format": "pycolmap/sparse-reconstruction-v1",
+    "fixture": false,
+    "provenance": "public real-world visual sequence; locally derived sparse reconstruction",
+    "source_url": "https://cvg.cit.tum.de/rgbd/dataset/freiburg1/rgbd_dataset_freiburg1_xyz.tgz",
+    "source_license": "CC-BY-4.0",
+    "source_checksum": "sha256:a0236d97b8c30cd93b653656d2b6c293ff7c982a4130ef2a1a8beecdb124ef98",
+    "source_captured_at": "UNKNOWN",
+    "derived_by": "PyCOLMAP 4.2.0 CPU sparse reconstruction",
+    "evidence_state": "DERIVED"
+  },
+  "scope": {
+    "source_scope_id": "external-scene:external_tum_rgbd_freiburg1_xyz_pycolmap_20260923",
+    "label": "External scene: TUM RGB-D freiburg1_xyz",
+    "kind": "zone",
+    "parent_scope_id": null
+  },
+  "entities": [{
+    "source_entity_id": "sparse-scene-bounds",
+    "category": "component",
+    "semantic_type": "UNKNOWN",
+    "geometry": {
+      "kind": "oriented_bounding_box",
+      "position": [-19.088629573971566, -5.530474727709856, 42.51948381760361],
+      "dimensions": [68.98807205535998, 35.01844907889113, 58.498278144682],
+      "orientation": [0.0, 0.0, 0.0]
+    },
+    "parent_scope": "external-scene:external_tum_rgbd_freiburg1_xyz_pycolmap_20260923",
+    "relationships": [],
+    "evidence_reference": "capture"
+  }]
+}

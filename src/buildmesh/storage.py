@@ -81,6 +81,19 @@ class Store:
                     task_node_id TEXT NOT NULL UNIQUE REFERENCES graph_nodes(id),
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS escalations (
+                    id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+                    recommendation_id TEXT NOT NULL REFERENCES recommendations(id), level TEXT NOT NULL,
+                    evidence_ids_json TEXT NOT NULL, created_at TEXT NOT NULL, fixture INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE(project_id, recommendation_id, level)
+                );
+                CREATE TABLE IF NOT EXISTS spatial_captures (
+                    project_id TEXT NOT NULL REFERENCES projects(id), capture_id TEXT NOT NULL,
+                    input_hash TEXT NOT NULL, evidence_id TEXT NOT NULL REFERENCES evidence(id),
+                    snapshot_id TEXT NOT NULL REFERENCES graph_nodes(id), scope_node_id TEXT NOT NULL REFERENCES graph_nodes(id),
+                    entity_node_ids_json TEXT NOT NULL, created_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, capture_id)
+                );
                 """
             )
 
@@ -128,6 +141,8 @@ class Store:
 
     def update_node_attributes(self, node_id: str, attributes: dict[str, Any]) -> dict[str, Any]:
         node = self.get_node(node_id)
+        if node["kind"] == "snapshot" and node["attributes"].get("immutable"):
+            raise ValueError("immutable snapshots cannot be modified")
         merged = {**node["attributes"], **attributes}
         with self.connection() as con:
             con.execute("UPDATE graph_nodes SET attributes_json = ? WHERE id = ?", (self._dump(merged), node_id))
@@ -228,26 +243,142 @@ class Store:
         with self.connection() as con:
             return self._row(con.execute("SELECT * FROM evidence WHERE id = ?", (evidence_id,)).fetchone())
 
-    def add_recommendation(self, recommendation: Recommendation) -> dict[str, Any]:
+    def ingest_spatial_capture_atomic(self, project_id: str, capture: dict[str, Any], fail_at: str | None = None) -> dict[str, Any]:
+        """Persist one validated spatial capture using the existing Store transaction layer."""
+        if fail_at not in {None, "evidence", "snapshot", "entity", "graph", "final"}:
+            raise ValueError("unsupported spatial capture failure point")
+        capture_hash = hashlib.sha256(self._dump(capture).encode()).hexdigest()
+        with self.connection(immediate=True) as con:
+            self.get_project(project_id)
+            existing = con.execute("SELECT * FROM spatial_captures WHERE project_id=? AND capture_id=?", (project_id, capture["capture_id"])).fetchone()
+            if existing:
+                record = self._row(existing)
+                if record["input_hash"] != capture_hash:
+                    raise ValueError("capture_id already exists with different content")
+                return {"status": "idempotent", "capture_id": capture["capture_id"], "evidence_id": record["evidence_id"], "snapshot_id": record["snapshot_id"], "scope_id": record["scope_node_id"], "entity_ids": record["entity_node_ids"]}
+
+            def node(kind: str, label: str, attributes: dict[str, Any]) -> dict[str, Any]:
+                value = {"id": new_id("node"), "project_id": project_id, "kind": kind, "label": label, "attributes": attributes, "created_at": now()}
+                con.execute("INSERT INTO graph_nodes VALUES (?, ?, ?, ?, ?, ?)", (value["id"], project_id, kind, label, self._dump(attributes), value["created_at"]))
+                return value
+
+            def edge(source_id: str, target_id: str, relation: str, attributes: dict[str, Any] | None = None) -> dict[str, Any]:
+                value = {"id": new_id("edge"), "project_id": project_id, "source_id": source_id, "target_id": target_id, "relation": relation, "attributes": attributes or {}, "created_at": now()}
+                con.execute("INSERT INTO graph_edges VALUES (?, ?, ?, ?, ?, ?, ?)", (value["id"], project_id, source_id, target_id, relation, self._dump(value["attributes"]), value["created_at"]))
+                return value
+
+            root = con.execute("SELECT id FROM graph_nodes WHERE project_id=? AND kind='project' ORDER BY created_at LIMIT 1", (project_id,)).fetchone()
+            if root is None:
+                raise ValueError("project root is missing")
+            payload = {"capture_id": capture["capture_id"], "source": capture["source"], "captured_at": capture["captured_at"], "coordinate_frame": capture["coordinate_frame"], "scope": capture["scope"], "fixture": capture["source"]["fixture"]}
+            evidence = {"id": new_id("evidence"), "project_id": project_id, "kind": "spatial_capture", "source": f"spatial-capture:{capture['source']['kind']}", "payload": payload, "captured_at": capture["captured_at"], "confidence": None}
+            con.execute("INSERT INTO evidence VALUES (?, ?, ?, ?, ?, ?, ?)", (evidence["id"], project_id, evidence["kind"], evidence["source"], self._dump(payload), evidence["captured_at"], None))
+            evidence_node = node("evidence", f"spatial_capture: {capture['capture_id']}", {"evidence_id": evidence["id"], "kind": "spatial_capture", "source": evidence["source"], "confidence": None})
+            edge(root["id"], evidence_node["id"], "contains")
+            con.execute("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)", (new_id("event"), project_id, "evidence_recorded", evidence["id"], self._dump({"evidence_id": evidence["id"], "graph_node_id": evidence_node["id"], "kind": "spatial_capture"}), now()))
+            if fail_at == "evidence":
+                raise RuntimeError("injected spatial capture evidence failure")
+
+            parent_scope_id = capture["scope"]["parent_scope_id"] or root["id"]
+            parent = con.execute("SELECT project_id FROM graph_nodes WHERE id=?", (parent_scope_id,)).fetchone()
+            if not parent or parent["project_id"] != project_id:
+                raise ValueError("capture scope parent is outside the project")
+            scope = node(capture["scope"]["kind"], capture["scope"]["label"], {"capture_id": capture["capture_id"], "source_scope_id": capture["scope"]["source_scope_id"], "capture_evidence_id": evidence["id"], "fixture": capture["source"]["fixture"]})
+            edge(parent_scope_id, scope["id"], "contains")
+            edge(evidence_node["id"], scope["id"], "evidence_for")
+            snapshot = node("snapshot", f"Capture {capture['capture_id']}", {"captured_at": capture["captured_at"], "source_evidence_ids": [evidence["id"]], "immutable": True, "observation_count": len(capture["entities"]), "capture_id": capture["capture_id"], "fixture": capture["source"]["fixture"]})
+            edge(root["id"], snapshot["id"], "contains")
+            edge(evidence_node["id"], snapshot["id"], "supports")
+            if fail_at == "snapshot":
+                raise RuntimeError("injected spatial capture snapshot failure")
+
+            external_refs = {item["evidence_reference"] for item in capture["entities"] if item["evidence_reference"] != "capture"}
+            for reference in external_refs:
+                item = con.execute("SELECT project_id FROM evidence WHERE id=?", (reference,)).fetchone()
+                if not item or item["project_id"] != project_id:
+                    raise ValueError("entity evidence reference is unavailable in this project")
+            entities: dict[str, dict[str, Any]] = {}
+            for item in capture["entities"]:
+                geometry = item["geometry"]
+                attrs = {"capture_id": capture["capture_id"], "source_entity_id": item["source_entity_id"], "semantic_type": item["semantic_type"], "ifc_class": item["semantic_type"], "geometry": geometry, "placement": dict(zip(("x", "y", "z"), geometry["position"])), "dimensions": geometry["dimensions"], "orientation": geometry["orientation"], "parent_scope": item["parent_scope"], "capture_evidence_id": evidence["id"], "entity_evidence_id": evidence["id"] if item["evidence_reference"] == "capture" else item["evidence_reference"], "confidence": item.get("confidence"), "confidence_state": "SUPPLIED" if "confidence" in item else "UNKNOWN", "fixture": capture["source"]["fixture"]}
+                if "material" in item:
+                    attrs["material"] = item["material"]
+                entities[item["source_entity_id"]] = node("component", item["semantic_type"], attrs)
+            if fail_at == "entity":
+                raise RuntimeError("injected spatial capture entity failure")
+
+            containment: set[tuple[str, str]] = set()
+            for item in capture["entities"]:
+                child = entities[item["source_entity_id"]]["id"]
+                parent_id = scope["id"] if item["parent_scope"] == capture["scope"]["source_scope_id"] else entities[item["parent_scope"]]["id"]
+                containment.add((parent_id, child))
+                for relationship in item["relationships"]:
+                    containment.add((entities[item["source_entity_id"]]["id"], entities[relationship["target_source_entity_id"]]["id"]))
+            for parent_id, child_id in sorted(containment):
+                edge(parent_id, child_id, "contains", {"source": "explicit_capture_relationship"})
+            evidence_nodes = [self._row(row) for row in con.execute("SELECT * FROM graph_nodes WHERE project_id=? AND kind='evidence'", (project_id,))]
+            for item in capture["entities"]:
+                component = entities[item["source_entity_id"]]
+                entity_evidence_id = component["attributes"]["entity_evidence_id"]
+                edge(evidence_node["id"], component["id"], "evidence_for")
+                source_node = evidence_node if entity_evidence_id == evidence["id"] else next((node for node in evidence_nodes if node["attributes"].get("evidence_id") == entity_evidence_id), None)
+                if source_node is None:
+                    raise ValueError("entity evidence provenance node is missing")
+                if source_node["id"] != evidence_node["id"]:
+                    edge(source_node["id"], component["id"], "evidence_for")
+                confidence = item.get("confidence", 0.0)
+                epistemic = "VERIFIED" if "confidence" in item else "UNKNOWN"
+                observation = {"id": new_id("evidence"), "project_id": project_id, "kind": "twin_observation", "source": f"snapshot:{snapshot['id']}", "payload": {"snapshot_id": snapshot["id"], "component_id": component["id"], "observed_state": "IN_PROGRESS", "confidence": confidence, "epistemic_state": epistemic, "zone_id": scope["id"] if scope["kind"] == "zone" else None, "fixture": capture["source"]["fixture"], "capture_evidence_id": evidence["id"], "source_entity_id": item["source_entity_id"]}, "captured_at": capture["captured_at"], "confidence": confidence}
+                con.execute("INSERT INTO evidence VALUES (?, ?, ?, ?, ?, ?, ?)", (observation["id"], project_id, observation["kind"], observation["source"], self._dump(observation["payload"]), observation["captured_at"], observation["confidence"]))
+                observation_node = node("evidence", f"twin_observation: {item['source_entity_id']}", {"evidence_id": observation["id"], "kind": "twin_observation", "source": observation["source"], "confidence": confidence})
+                edge(root["id"], observation_node["id"], "contains")
+                edge(snapshot["id"], observation_node["id"], "contains")
+                edge(observation_node["id"], component["id"], "observes")
+            if fail_at == "graph":
+                raise RuntimeError("injected spatial capture graph failure")
+            con.execute("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)", (new_id("event"), project_id, "twin_snapshot_created", snapshot["id"], self._dump({"snapshot_id": snapshot["id"], "source_evidence_ids": [evidence["id"]], "capture_id": capture["capture_id"]}), now()))
+            if fail_at == "final":
+                raise RuntimeError("injected spatial capture final failure")
+            created_at = now()
+            con.execute("INSERT INTO spatial_captures VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (project_id, capture["capture_id"], capture_hash, evidence["id"], snapshot["id"], scope["id"], self._dump([item["id"] for item in entities.values()]), created_at))
+            con.execute("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)", (new_id("event"), project_id, "spatial_capture_ingested", capture["capture_id"], self._dump({"capture_id": capture["capture_id"], "evidence_id": evidence["id"], "snapshot_id": snapshot["id"], "scope_id": scope["id"], "entity_count": len(entities), "fixture": capture["source"]["fixture"]}), created_at))
+            return {"status": "created", "capture_id": capture["capture_id"], "evidence_id": evidence["id"], "snapshot_id": snapshot["id"], "scope_id": scope["id"], "entity_ids": [item["id"] for item in entities.values()]}
+
+    def spatial_capture(self, project_id: str, capture_id: str) -> dict[str, Any]:
+        with self.connection() as con:
+            record = self._row(con.execute("SELECT * FROM spatial_captures WHERE project_id=? AND capture_id=?", (project_id, capture_id)).fetchone())
+        return {"capture_id": capture_id, "capture": self.get_evidence(record["evidence_id"]), "snapshot": self.get_node(record["snapshot_id"]), "scope": self.get_node(record["scope_node_id"]), "entities": [self.get_node(node_id) for node_id in record["entity_node_ids"]], "fixture": self.get_evidence(record["evidence_id"])["payload"]["fixture"]}
+
+    def _insert_recommendation(self, con: sqlite3.Connection, recommendation: Recommendation) -> dict[str, Any]:
         d = recommendation.data()
         evidence_ids = d["evidence_ids"]
         if not evidence_ids or len(evidence_ids) != len(set(evidence_ids)):
             raise ValueError("recommendations require unique supporting evidence")
         for evidence_id in evidence_ids:
-            evidence = self.get_evidence(evidence_id)
-            if evidence["project_id"] != d["project_id"]:
+            evidence = con.execute("SELECT project_id FROM evidence WHERE id = ?", (evidence_id,)).fetchone()
+            if not evidence or evidence["project_id"] != d["project_id"]:
                 raise ValueError("recommendation evidence must belong to the same project")
-        with self.connection() as con:
-            con.execute("INSERT INTO recommendations (id, project_id, title, rationale, severity, evidence_ids_json, proposed_task_json, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (d["id"], d["project_id"], d["title"], d["rationale"], d["severity"], self._dump(d["evidence_ids"]), self._dump(d["proposed_task"]) if d["proposed_task"] else None, d["status"], d["created_at"]))
-        node = self.add_node(d["project_id"], "recommendation", d["title"], {"recommendation_id": d["id"], "severity": d["severity"], "status": d["status"]})
-        self.add_edge(d["project_id"], self.project_root(d["project_id"])["id"], node["id"], "contains")
+        con.execute("INSERT INTO recommendations (id, project_id, title, rationale, severity, evidence_ids_json, proposed_task_json, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (d["id"], d["project_id"], d["title"], d["rationale"], d["severity"], self._dump(d["evidence_ids"]), self._dump(d["proposed_task"]) if d["proposed_task"] else None, d["status"], d["created_at"]))
+        node_id = new_id("node")
+        root = con.execute("SELECT id FROM graph_nodes WHERE project_id = ? AND kind = 'project' ORDER BY created_at LIMIT 1", (d["project_id"],)).fetchone()
+        if root is None:
+            raise ValueError("project root is missing")
+        con.execute("INSERT INTO graph_nodes VALUES (?, ?, ?, ?, ?, ?)", (node_id, d["project_id"], "recommendation", d["title"], self._dump({"recommendation_id": d["id"], "severity": d["severity"], "status": d["status"]}), d["created_at"]))
+        con.execute("INSERT INTO graph_edges VALUES (?, ?, ?, ?, ?, ?, ?)", (new_id("edge"), d["project_id"], root["id"], node_id, "contains", self._dump({}), d["created_at"]))
+        evidence_nodes = [self._row(row) for row in con.execute("SELECT * FROM graph_nodes WHERE project_id = ? AND kind = 'evidence'", (d["project_id"],))]
         for evidence_id in d["evidence_ids"]:
-            evidence_node = self.find_graph_node(d["project_id"], "evidence_id", evidence_id)
-            if evidence_node:
-                self.add_edge(d["project_id"], evidence_node["id"], node["id"], "supports")
-        self.record_event(d["project_id"], "recommendation_created", {"recommendation_id": d["id"], "graph_node_id": node["id"], "severity": d["severity"]}, d["id"])
-        d["graph_node_id"] = node["id"]
+            evidence_node = next((node for node in evidence_nodes if node["attributes"].get("evidence_id") == evidence_id), None)
+            if evidence_node is None:
+                raise ValueError("recommendation evidence provenance node is missing")
+            con.execute("INSERT INTO graph_edges VALUES (?, ?, ?, ?, ?, ?, ?)", (new_id("edge"), d["project_id"], evidence_node["id"], node_id, "supports", self._dump({}), d["created_at"]))
+        con.execute("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)", (new_id("event"), d["project_id"], "recommendation_created", d["id"], self._dump({"recommendation_id": d["id"], "graph_node_id": node_id, "severity": d["severity"], "evidence_ids": evidence_ids}), d["created_at"]))
+        d["graph_node_id"] = node_id
         return d
+
+    def add_recommendation(self, recommendation: Recommendation) -> dict[str, Any]:
+        """Persist one evidence-backed recommendation atomically."""
+        with self.connection(immediate=True) as con:
+            return self._insert_recommendation(con, recommendation)
 
     def recommendations(self, project_id: str) -> list[dict[str, Any]]:
         with self.connection() as con:
@@ -337,6 +468,39 @@ class Store:
                 con.execute("INSERT INTO recommendation_materializations VALUES (?, ?, ?)", (recommendation_id, task_id, created_at))
                 result["created_task"] = {"id": task_id, "project_id": project_id, "kind": "task", "label": task["title"], "attributes": task_attributes, "created_at": created_at}
         return result
+
+    def persist_escalation(self, project_id: str, recommendation_id: str, level: str, evidence_ids: list[str], fixture: bool = False) -> dict[str, Any]:
+        if level not in {"REVIEW", "ESCALATE"} or not evidence_ids:
+            raise ValueError("escalation requires a supported level and evidence")
+        with self.connection(immediate=True) as con:
+            existing = con.execute("SELECT * FROM escalations WHERE project_id=? AND recommendation_id=? AND level=?", (project_id, recommendation_id, level)).fetchone()
+            if existing:
+                return self._row(existing) | {"status": "idempotent"}
+            escalation = {"id": new_id("escalation"), "project_id": project_id, "recommendation_id": recommendation_id, "level": level, "evidence_ids": evidence_ids, "created_at": now(), "fixture": bool(fixture)}
+            con.execute("INSERT INTO escalations VALUES (?, ?, ?, ?, ?, ?, ?)", (escalation["id"], project_id, recommendation_id, level, self._dump(evidence_ids), escalation["created_at"], int(fixture)))
+            con.execute("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)", (new_id("event"), project_id, "escalation_recorded", escalation["id"], self._dump({"escalation_id": escalation["id"], "recommendation_id": recommendation_id, "level": level, "evidence_ids": evidence_ids}), escalation["created_at"]))
+            return escalation | {"status": "created"}
+
+    def escalations(self, project_id: str) -> list[dict[str, Any]]:
+        with self.connection() as con:
+            return [self._row(row) for row in con.execute("SELECT * FROM escalations WHERE project_id=? ORDER BY created_at", (project_id,))]
+
+    def persist_operational_batch(self, recommendations: list[Recommendation], escalations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Commit an orchestrator result as one Store transaction, or not at all."""
+        with self.connection(immediate=True) as con:
+            created = [self._insert_recommendation(con, recommendation) for recommendation in recommendations]
+            for finding in escalations:
+                project_id, recommendation_id = finding["project_id"], finding["recommendation_id"]
+                level, evidence_ids = finding["level"], finding["evidence_ids"]
+                if level not in {"REVIEW", "ESCALATE"} or not evidence_ids:
+                    raise ValueError("escalation requires a supported level and evidence")
+                existing = con.execute("SELECT id FROM escalations WHERE project_id=? AND recommendation_id=? AND level=?", (project_id, recommendation_id, level)).fetchone()
+                if existing:
+                    continue
+                escalation_id, created_at = new_id("escalation"), now()
+                con.execute("INSERT INTO escalations VALUES (?, ?, ?, ?, ?, ?, ?)", (escalation_id, project_id, recommendation_id, level, self._dump(evidence_ids), created_at, int(finding.get("fixture", False))))
+                con.execute("INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)", (new_id("event"), project_id, "escalation_recorded", escalation_id, self._dump({"escalation_id": escalation_id, "recommendation_id": recommendation_id, "level": level, "evidence_ids": evidence_ids}), created_at))
+            return created
 
     def record_agent_run(self, project_id: str, agent_name: str, input_value: Any, output_value: Any) -> dict[str, Any]:
         digest = lambda value: hashlib.sha256(self._dump(value).encode()).hexdigest()

@@ -15,6 +15,7 @@ from .validation import qnn_readiness, validation_state
 from . import twin
 from .environment import historical_windows, normalize, score, solar
 from .spatial import geometric_relationship, geometry_status, planned_nodes, validate_plan
+from .spatial_capture import validate_capture
 from .ifc import parse as parse_ifc
 from .design_reality import reconcile as reconcile_design, compare_scope_hierarchy
 from .ingestion import DocumentExtractor, LocalAssetStore
@@ -26,7 +27,7 @@ from .types import Evidence, Recommendation, RecommendationStatus, Severity, Tas
 class BuildMeshService:
     def __init__(self, database: str = "buildmesh.db", asset_root: str | Path | None = None, weather_client: WeatherClient | None = None, vision_provider: VisionProvider | None = None, notifier: Notifier | None = None) -> None:
         self.store = Store(database)
-        self.openmesh = OpenMeshOrchestrator(self.store)
+        self.openmesh = OpenMeshOrchestrator(self.store, self.store.add_recommendation)
         self.assets = LocalAssetStore(asset_root or Path(database).parent / "data")
         self.documents = DocumentExtractor()
         self.weather = weather_client or OpenMeteoWeatherClient()
@@ -49,6 +50,13 @@ class BuildMeshService:
 
     def create_twin_snapshot(self, project_id: str, label: str, captured_at: str, source_evidence_ids: list[str], observations: list[dict[str, Any]]) -> dict[str, Any]:
         return twin.create_snapshot(self.store, project_id, label, captured_at, source_evidence_ids, observations)
+
+    def ingest_spatial_capture(self, project_id: str, payload: dict[str, Any], fail_at: str | None = None) -> dict[str, Any]:
+        """Ingest a BuildMesh-normalized observed capture without changing planned state."""
+        return self.store.ingest_spatial_capture_atomic(project_id, validate_capture(payload), fail_at)
+
+    def inspect_spatial_capture(self, project_id: str, capture_id: str) -> dict[str, Any]:
+        return self.store.spatial_capture(project_id, capture_id)
 
     def link_task_component(self, project_id: str, task_id: str, component_id: str, scope: str = "component") -> dict[str, Any]:
         """Record an explicit, bounded work-scope assertion; it never infers one from names."""
@@ -794,12 +802,15 @@ class BuildMeshService:
         recommendation = self.store.get_recommendation(recommendation_id)
         prior = [event for event in self.store.events(recommendation["project_id"]) if event["kind"] == "review_notification" and event["payload"].get("recommendation_id") == recommendation_id and event["payload"].get("recipient") == recipient]
         if prior:
-            return {"status": "idempotent", **prior[0]["payload"]}
+            return {**prior[0]["payload"], "status": "idempotent"}
         if not self.notifier:
             result = {"status": "not_configured", "channel": "smtp", "recipient": recipient}
         else:
             result = self.notifier.send(recipient, f"BuildMesh review: {recommendation['title']}", f"A {recommendation['severity']} BuildMesh recommendation requires review.\n\n{recommendation['rationale']}")
-        payload = {"recommendation_id": recommendation_id, "recipient": recipient, "fixture": result.get("mode") == "fixture", **result}
+        graph = self.store.graph(recommendation["project_id"])
+        recommendation_node = next((node for node in graph["nodes"] if node["kind"] == "recommendation" and node["attributes"].get("recommendation_id") == recommendation_id), None)
+        action = next((edge for edge in graph["edges"] if recommendation_node and edge["source_id"] == recommendation_node["id"] and edge["relation"] == "approved_action"), None)
+        payload = {"recommendation_id": recommendation_id, "project_id": recommendation["project_id"], "recipient": recipient, "evidence_ids": recommendation["evidence_ids"], "proposed_task": recommendation["proposed_task"], "action_task_id": action["target_id"] if action else None, "fixture": result.get("mode") == "fixture", **result}
         self.store.record_event(recommendation["project_id"], "review_notification", payload, recommendation_id)
         return payload
 
@@ -811,6 +822,24 @@ class BuildMeshService:
         affected = [task_id, *downstream]
         options = [("RESEQUENCE", affected, "reduce waiting time", "MEDIUM"), ("SHIFT_WINDOW", [task_id], "recover one work window", "HIGH"), ("COMPLETE_PREREQUISITE", [*prerequisites, task_id], "remove dependency block", "LOW"), ("MITIGATE_AND_REVIEW", [task_id], "preserve current plan pending review", "HIGH")]
         return {"project_id": project_id, "task_id": task_id, "options": [{"id": ident, "affected_task_ids": ids, "assumptions": ["site conditions remain as supplied"], "dependencies": prerequisites if ident != "SHIFT_WINDOW" else [], "expected_schedule_effect": effect, "uncertainty": uncertainty} for ident, ids, effect, uncertainty in options], "selected": None, "requires_human_approval": True}
+
+    def operational_timeline(self, recommendation_id: str) -> dict[str, Any]:
+        """Derive a linked operational chain from persisted records, never display-only state."""
+        recommendation = self.store.get_recommendation(recommendation_id); project_id = recommendation["project_id"]
+        graph = self.store.graph(project_id); events = self.store.events(project_id)
+        recommendation_node = next(node for node in graph["nodes"] if node["kind"] == "recommendation" and node["attributes"].get("recommendation_id") == recommendation_id)
+        action = next((edge for edge in graph["edges"] if edge["source_id"] == recommendation_node["id"] and edge["relation"] == "approved_action"), None)
+        action_id = action["target_id"] if action else None
+        related = [event for event in events if event["subject_id"] in {recommendation_id, action_id} or event["payload"].get("recommendation_id") == recommendation_id]
+        evidence = [self.store.get_evidence(evidence_id) for evidence_id in recommendation["evidence_ids"]]
+        source_events = [event for event in events if event["subject_id"] in set(recommendation["evidence_ids"])]
+        state_evidence = []
+        if action_id:
+            evidence_nodes = {node["id"]: node for node in graph["nodes"] if node["kind"] == "evidence"}
+            for edge in graph["edges"]:
+                if edge["relation"] == "states" and edge["target_id"] == action_id and edge["source_id"] in evidence_nodes:
+                    state_evidence.append(self.store.get_evidence(evidence_nodes[edge["source_id"]]["attributes"]["evidence_id"]))
+        return {"project_id": project_id, "recommendation_id": recommendation_id, "evidence_ids": recommendation["evidence_ids"], "observations": evidence, "source_events": source_events, "agent_runs": [run for run in self.store.agent_runs(project_id) if run["agent_name"] in {"risk-agent", "recommendation-agent"}], "recommendation": recommendation, "action_task_id": action_id, "action": self.store.get_node(action_id) if action_id else None, "state_evidence": state_evidence, "events": related}
 
     def approve(self, recommendation_id: str, reviewer: str, decision: str, comment: str | None = None) -> dict[str, Any]:
         return self.store.review_recommendation(recommendation_id, reviewer, RecommendationStatus(decision), comment)

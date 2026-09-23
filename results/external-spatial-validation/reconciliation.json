@@ -1,0 +1,9 @@
+{
+  "controlled_planned_state": "IfcWindow",
+  "observed_semantic_type": "UNKNOWN",
+  "coordinate_scale": "arbitrary_scale",
+  "match_decision": "UNKNOWN",
+  "design_reality_state": "UNKNOWN",
+  "operational_recommendation": null,
+  "reason": "No semantic identity or metric coordinate alignment was available; BuildMesh did not infer correspondence."
+}

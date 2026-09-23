@@ -1,0 +1,351 @@
+{
+  "buildmesh_integration": {
+    "classification": "validation evidence only; not authoritative project state",
+    "provenance_chain": "TUM RGB-D freiburg1_xyz frame -> MiDaS-V2 -> local ONNX Runtime reference and hosted Qualcomm inference -> numerical comparison",
+    "spatial_boundary": "This run does not claim Qualcomm performed the earlier PyCOLMAP reconstruction or that depth alone creates a semantic construction twin."
+  },
+  "chipset": [
+    "qualcomm-snapdragon-8-elite-gen5",
+    "sm8850"
+  ],
+  "comparison": {
+    "element_count": 65536,
+    "mae": 1.5730767550703604,
+    "max_absolute_error": 5.3421630859375,
+    "normalized_rmse": 0.0019748687550816403,
+    "observed_shape": [
+      1,
+      1,
+      256,
+      256
+    ],
+    "passed": true,
+    "pearson_correlation": 0.9999956625156387,
+    "policy": {
+      "maximum_normalized_rmse": 0.01,
+      "minimum_pearson_correlation": 0.999,
+      "shape_must_match": true
+    },
+    "reference_shape": [
+      1,
+      1,
+      256,
+      256
+    ],
+    "rmse": 1.8346028813509376,
+    "shape_match": true
+  },
+  "compile": {
+    "input_specs": {
+      "image": {
+        "dtype": "float32",
+        "shape": [
+          1,
+          3,
+          256,
+          256
+        ]
+      }
+    },
+    "job_id": "jpe7z89v5",
+    "options": "",
+    "status": "SUCCESS",
+    "target_model_id": "mqeyzkj5m",
+    "target_model_name": "job_jpe7z89v5_optimized_tflite",
+    "target_model_type": "TFLITE",
+    "url": "https://workbench.aihub.qualcomm.com/jobs/jpe7z89v5/"
+  },
+  "device": "Snapdragon 8 Elite Gen 5 QRD",
+  "framework": "TFLite target via Qualcomm AI Hub",
+  "inference": {
+    "job_id": "jgnzno2qg",
+    "output_dtype": "float32",
+    "output_sha256": "4bc5deb1ef7de678e2bcb368cfa0316ebe18de633d132cdf300f687c3985bbbb",
+    "output_shape": [
+      1,
+      1,
+      256,
+      256
+    ],
+    "source_output_name": "depth_estimates",
+    "status": "SUCCESS",
+    "target_output_name": "output_0",
+    "url": "https://workbench.aihub.qualcomm.com/jobs/jgnzno2qg/"
+  },
+  "input": {
+    "file_size_bytes": 506503,
+    "preprocessing": "RGB conversion; Pillow bilinear resize to 256x256; HWC to NCHW; float32 divide by 255.0",
+    "relative_frame_path": "rgb/1305031102.175304.png",
+    "sha256": "331c3fd7a3d5eefb19e3da2026625aa221ca1991f5ae30ff96060e2e3e45e368",
+    "source_dimensions": [
+      640,
+      480
+    ],
+    "source_url": "https://cvg.cit.tum.de/rgbd/dataset/freiburg1/rgbd_dataset_freiburg1_xyz.tgz",
+    "tensor_dtype": "float32",
+    "tensor_range": [
+      0.003921568859368563,
+      0.9960784316062927
+    ],
+    "tensor_shape": [
+      1,
+      3,
+      256,
+      256
+    ]
+  },
+  "limitations": [
+    "No TUM image, model binary, inference tensor, or token is stored in this repository.",
+    "The local ONNX Runtime result is a correctness reference, not a Qualcomm performance comparison.",
+    "AI Hub profile values describe this single hosted run and do not establish end-to-end BuildMesh acceleration or accuracy improvement."
+  ],
+  "model": "Midas-V2",
+  "model_id": "mm6j5px2q",
+  "model_source": "Qualcomm AI Hub Models catalog: midas, ONNX float artifact",
+  "os": "16",
+  "profile": {
+    "artifact": "profile/ai-hub-profile.json",
+    "execution_summary": {
+      "all_compile_times": [],
+      "all_first_load_times": [
+        886925
+      ],
+      "all_inference_times": [
+        3709,
+        1307,
+        1353,
+        1285,
+        1273,
+        1262,
+        1253,
+        1253,
+        1251,
+        1257,
+        1249,
+        1488,
+        1287,
+        1281,
+        1276,
+        1270,
+        1263,
+        1268,
+        1261,
+        1286,
+        1270,
+        1262,
+        1257,
+        1265,
+        1258,
+        1259,
+        1266,
+        1261,
+        1252,
+        1255,
+        1253,
+        1254,
+        1251,
+        1251,
+        1248,
+        1254,
+        1241,
+        1253,
+        1256,
+        1255,
+        1253,
+        1252,
+        1254,
+        1253,
+        1256,
+        1257,
+        1250,
+        1256,
+        1252,
+        1256,
+        1255,
+        1249,
+        1256,
+        1259,
+        1387,
+        1409,
+        1386,
+        1363,
+        1390,
+        1267,
+        1270,
+        1282,
+        1256,
+        1288,
+        1276,
+        1261,
+        1273,
+        1285,
+        1284,
+        1308,
+        1300,
+        1286,
+        1293,
+        1286,
+        1286,
+        1270,
+        1287,
+        1284,
+        1295,
+        1270,
+        1270,
+        1273,
+        1270,
+        1271,
+        1268,
+        1270,
+        1272,
+        1264,
+        1275,
+        1271,
+        1269,
+        1266,
+        1264,
+        1252,
+        1260,
+        1257,
+        1256,
+        1251,
+        1256,
+        1252
+      ],
+      "all_warm_load_times": [
+        95899
+      ],
+      "compile_memory_increase_range": [
+        0,
+        0
+      ],
+      "compile_memory_peak_range": [
+        0,
+        0
+      ],
+      "compile_peak_memory": 0,
+      "compile_time": 0,
+      "estimated_inference_peak_memory": 274534400,
+      "estimated_inference_time": 1241,
+      "first_load_memory_increase_range": [
+        0,
+        0
+      ],
+      "first_load_memory_peak_range": [
+        391528448,
+        399009408
+      ],
+      "first_load_peak_memory": 531124224,
+      "first_load_time": 886925,
+      "inference_memory_increase_range": [
+        0,
+        307824
+      ],
+      "inference_memory_peak_range": [
+        16384,
+        181861136
+      ],
+      "warm_load_memory_increase_range": [
+        0,
+        34966512
+      ],
+      "warm_load_memory_peak_range": [
+        33968128,
+        217401920
+      ],
+      "warm_load_peak_memory": 261427200,
+      "warm_load_time": 95899
+    },
+    "job_id": "jpxl43vlp",
+    "parsed_artifact": {
+      "compute_units": [
+        "NPU"
+      ],
+      "estimated_inference_time_us": 1241,
+      "first_load_time_us": 886925,
+      "operator_count": 140,
+      "warm_load_time_us": 95899
+    },
+    "status": "SUCCESS",
+    "url": "https://workbench.aihub.qualcomm.com/jobs/jpxl43vlp/"
+  },
+  "reference": {
+    "dtype": "float32",
+    "max": 943.2032470703125,
+    "mean": 515.518310546875,
+    "min": 14.228662490844727,
+    "output_name": "depth_estimates",
+    "runtime": "onnxruntime",
+    "runtime_version": "1.30.0",
+    "sha256_npz": "8212bb10dd8780f67de290fce2491570f1ea6baed47456f96690f2e2d5f80a07",
+    "shape": [
+      1,
+      1,
+      256,
+      256
+    ]
+  },
+  "requirements": [
+    {
+      "detail": "completed with structured evidence",
+      "id": "QAI-001",
+      "status": "PASS"
+    },
+    {
+      "detail": "completed with structured evidence",
+      "id": "QAI-002",
+      "status": "PASS"
+    },
+    {
+      "detail": "completed with structured evidence",
+      "id": "QAI-003",
+      "status": "PASS"
+    },
+    {
+      "detail": "completed with structured evidence",
+      "id": "QAI-004",
+      "status": "PASS"
+    },
+    {
+      "detail": "completed with structured evidence",
+      "id": "QAI-005",
+      "status": "PASS"
+    },
+    {
+      "detail": "completed with structured evidence",
+      "id": "QAI-006",
+      "status": "PASS"
+    },
+    {
+      "detail": "completed with structured evidence",
+      "id": "QAI-007",
+      "status": "PASS"
+    },
+    {
+      "detail": "completed with structured evidence",
+      "id": "QAI-008",
+      "status": "PASS"
+    },
+    {
+      "detail": "completed with structured evidence",
+      "id": "QAI-009",
+      "status": "PASS"
+    },
+    {
+      "detail": "completed with structured evidence",
+      "id": "QAI-010",
+      "status": "PASS"
+    }
+  ],
+  "run_id": "qai-midas-v2-snapdragon-8-elite-gen5-20260924",
+  "runtime": "QAIRT 2.50.0.260828221209 compatibility asset; AI Hub compiled TFLite target",
+  "stages": {
+    "compile": "SUCCESS",
+    "inference": "SUCCESS",
+    "profile": "SUCCESS",
+    "upload": "SUCCESS"
+  },
+  "status": "COMPLETE",
+  "timestamp": "2026-09-23T22:31:51.794461+00:00",
+  "vendor": "Qualcomm"
+}

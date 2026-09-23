@@ -14,6 +14,92 @@ class AgentResult:
     findings: list[dict[str, Any]]
     evidence_ids: list[str]
 
+STRICT_FINDING_SCHEMAS = {
+    "schedule-agent": ({"type", "severity", "task_ref", "planned_percent", "reported_percent", "variance_percent", "days_remaining", "evidence_id", "evidence_ids"}, {"type", "severity", "task_ref", "planned_percent", "reported_percent", "variance_percent", "days_remaining", "evidence_id", "evidence_ids"}),
+    "material-agent": ({"type", "severity", "task_ref", "reported_percent", "planned_material_units", "actual_material_units", "expected_material_units", "variance_units", "evidence_id"}, {"type", "severity", "task_ref", "reported_percent", "planned_material_units", "actual_material_units", "expected_material_units", "variance_units", "evidence_id"}),
+    "escalation-agent": ({"type", "recommendation_id", "level", "evidence_ids", "requires_human_review"}, {"type", "recommendation_id", "level", "evidence_ids", "requires_human_review"}),
+    "reporting-agent": ({"type", "project_id", "progress", "blocked", "reviews_required", "recommended_actions", "evidence_ids"}, {"type", "project_id", "progress", "blocked", "reviews_required", "recommended_actions", "evidence_ids"}),
+}
+RISK_ALLOWED_FIELDS = {"type", "severity", "task_ref", "planned_percent", "reported_percent", "variance_percent", "days_remaining", "evidence_id", "evidence_ids", "planned_material_units", "actual_material_units", "expected_material_units", "variance_units", "dependent_task_id", "dependent_task_label", "dependent_status", "prerequisite_task_id", "prerequisite_task_label", "prerequisite_status", "predecessor_task_label", "predecessor_status", "evidence_quote", "rain_probability", "hours_until", "document_activities", "labels", "high_window", "recommended_window", "confidence", "reduction", "task_id", "task_label", "affected_component_ids", "component_scope", "factors", "reasoning_trace", "assessment", "epistemic_state", "assumptions", "requires_human_review", "consistent", "derived_percent", "state", "affected_scope", "uncertainty"}
+
+def _number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+FIELD_VALIDATORS = {
+    "type": lambda value: isinstance(value, str) and bool(value),
+    "severity": lambda value: value in {"low", "medium", "high"},
+    "task_ref": lambda value: isinstance(value, str),
+    "evidence_id": lambda value: isinstance(value, str),
+    "evidence_ids": lambda value: isinstance(value, list) and all(isinstance(item, str) for item in value),
+    "level": lambda value: value in {"REVIEW", "ESCALATE"},
+    "requires_human_review": lambda value: isinstance(value, bool),
+    "project_id": lambda value: isinstance(value, str),
+    "progress": lambda value: value is None or _number(value),
+    "blocked": lambda value: isinstance(value, int) and not isinstance(value, bool),
+    "reviews_required": lambda value: isinstance(value, int) and not isinstance(value, bool),
+    "recommended_actions": lambda value: isinstance(value, int) and not isinstance(value, bool),
+}
+for _field in {"planned_percent", "reported_percent", "variance_percent", "days_remaining", "planned_material_units", "actual_material_units", "expected_material_units", "variance_units", "rain_probability", "hours_until", "confidence", "reduction", "derived_percent"}:
+    FIELD_VALIDATORS[_field] = _number
+for _field in {"document_activities", "labels", "affected_component_ids", "factors", "assumptions"}:
+    FIELD_VALIDATORS[_field] = lambda value: isinstance(value, list)
+for _field in {"high_window", "recommended_window", "reasoning_trace", "assessment"}:
+    FIELD_VALIDATORS[_field] = lambda value: isinstance(value, dict)
+for _field in {"consistent"}:
+    FIELD_VALIDATORS[_field] = lambda value: isinstance(value, bool)
+for _field in {"dependent_task_id", "dependent_task_label", "dependent_status", "prerequisite_task_id", "prerequisite_task_label", "prerequisite_status", "predecessor_task_label", "predecessor_status", "evidence_quote", "task_id", "task_label", "component_scope", "epistemic_state", "state", "affected_scope", "uncertainty"}:
+    FIELD_VALIDATORS[_field] = lambda value: isinstance(value, str) or value is None
+
+def validate_agent_result(store: Store, project_id: str, result: AgentResult) -> AgentResult:
+    """Validate the shared operational result envelope before trusted persistence."""
+    if not isinstance(result, AgentResult) or not isinstance(result.findings, list) or not isinstance(result.evidence_ids, list):
+        raise ValueError("agent result envelope is invalid")
+    project_evidence = {item["id"] for item in store.evidence(project_id)}
+    if any(not isinstance(identifier, str) or identifier not in project_evidence for identifier in result.evidence_ids):
+        raise ValueError("agent result references unknown evidence")
+    for finding in result.findings:
+        if not isinstance(finding, dict) or not isinstance(finding.get("type"), str):
+            raise ValueError("agent finding requires a type")
+        schema = STRICT_FINDING_SCHEMAS.get(result.agent)
+        allowed = RISK_ALLOWED_FIELDS if result.agent == "risk-agent" else schema[0] if schema else None
+        required = schema[1] if schema else {"type"}
+        if allowed is not None and (set(finding) - allowed or required - set(finding)):
+            raise ValueError("agent finding violates strict schema")
+        for field, value in finding.items():
+            validator = FIELD_VALIDATORS.get(field)
+            if validator and not validator(value):
+                raise ValueError(f"agent finding field {field} has an invalid type")
+        refs = finding.get("evidence_ids", [])
+        if not isinstance(refs, list) or any(identifier not in project_evidence for identifier in refs):
+            raise ValueError("agent finding references unknown evidence")
+        if finding.get("level") not in {None, "REVIEW", "ESCALATE", "BLOCKED"}:
+            raise ValueError("unsupported escalation level")
+        if "severity" in finding and finding["severity"] not in {"low", "medium", "high"}:
+            raise ValueError("unsupported severity")
+    return result
+
+
+def validate_recommendation_proposal(project_id: str, recommendation: Any) -> Recommendation:
+    """Validate the only agent output allowed to cross into recommendation persistence."""
+    if not isinstance(recommendation, Recommendation):
+        raise ValueError("recommendation output must be a Recommendation")
+    data = recommendation.data()
+    required = {"id", "project_id", "title", "rationale", "severity", "evidence_ids", "proposed_task", "status", "created_at"}
+    if set(data) != required or data["project_id"] != project_id:
+        raise ValueError("recommendation output violates strict schema")
+    if not all(isinstance(data[field], str) and data[field] for field in {"id", "project_id", "title", "rationale", "created_at"}):
+        raise ValueError("recommendation output has invalid required fields")
+    if data["severity"] not in {"low", "medium", "high"} or data["status"] != "pending_review":
+        raise ValueError("recommendation output has unsupported classification")
+    if not isinstance(data["evidence_ids"], list) or not data["evidence_ids"] or not all(isinstance(item, str) for item in data["evidence_ids"]):
+        raise ValueError("recommendation output requires evidence references")
+    task = data["proposed_task"]
+    allowed_task = {"title", "assignee_role", "due_within_hours", "requires_human_confirmation"}
+    if not isinstance(task, dict) or set(task) != allowed_task or not isinstance(task["title"], str) or not isinstance(task["assignee_role"], str) or not _number(task["due_within_hours"]) or not isinstance(task["requires_human_confirmation"], bool) or not task["requires_human_confirmation"]:
+        raise ValueError("recommendation output has an unsupported action")
+    return recommendation
+
 
 class DocumentAgent:
     """Extracts a deliberately small set of traceable signals from untrusted document text."""
@@ -66,7 +152,7 @@ class ProjectStateAgent:
             if planned and completed is not None:
                 derived = round((completed / planned) * 100, 1)
                 difference = abs(derived - float(reported)) if reported is not None else 0
-                findings.append({"task_ref": task_ref, "reported_percent": reported, "derived_percent": derived, "consistent": difference <= 10, "evidence_id": item["id"]})
+                findings.append({"type": "progress_reconciliation", "task_ref": task_ref, "reported_percent": reported, "derived_percent": derived, "consistent": difference <= 10, "evidence_id": item["id"]})
         result = AgentResult(self.name, findings, ids)
         store.record_agent_run(project_id, self.name, evidence, {"findings": findings, "evidence_ids": ids})
         return result
@@ -229,7 +315,7 @@ class PlanConstraintAgent:
 class RiskAgent:
     name = "risk-agent"
 
-    def run(self, store: Store, project_id: str, evidence: list[dict[str, Any]], state: AgentResult, documents: AgentResult, schedule: AgentResult, materials: AgentResult, dependencies: AgentResult, plan_constraints: AgentResult) -> AgentResult:
+    def run(self, store: Store, project_id: str, evidence: list[dict[str, Any]], state: AgentResult, documents: AgentResult, schedule: AgentResult, materials: AgentResult, dependencies: AgentResult, plan_constraints: AgentResult, design_reality: AgentResult | None = None) -> AgentResult:
         findings: list[dict[str, Any]] = [*schedule.findings, *materials.findings, *dependencies.findings, *plan_constraints.findings]
         ids = list(state.evidence_ids)
         weather = [item for item in evidence if item["kind"] == "weather_forecast"]
@@ -244,7 +330,13 @@ class RiskAgent:
                 findings.append({"type": "weather_window_risk", "severity": Severity.HIGH.value, "rain_probability": probability, "hours_until": hours, "evidence_id": item["id"], "evidence_ids": [item["id"], *related_ids], "document_activities": sorted({finding["activity"] for finding in related_documents})})
         for finding in state.findings:
             if not finding["consistent"]:
-                findings.append({"type": "progress_reconciliation_conflict", "severity": Severity.MEDIUM.value, **finding})
+                findings.append({**finding, "type": "progress_reconciliation_conflict", "severity": Severity.MEDIUM.value})
+        for finding in (design_reality.findings if design_reality else []):
+            state_name = finding.get("state")
+            if state_name not in {"SPATIAL_DEVIATION", "TYPE_CONFLICT", "SCOPE_CONFLICT", "CONFLICTING"}:
+                continue
+            trace = finding.get("trace", {})
+            findings.append({"type": "design_reality_risk", "severity": Severity.HIGH.value if state_name in {"TYPE_CONFLICT", "SCOPE_CONFLICT"} else Severity.MEDIUM.value, "state": state_name, "affected_scope": finding.get("planned_component_id"), "evidence_ids": trace.get("evidence_ids", []), "uncertainty": finding.get("evidence_sufficiency", "UNKNOWN"), "requires_human_review": bool(finding.get("requires_review"))})
         for item in evidence:
             if item["kind"] != "site_observation":
                 continue
@@ -265,7 +357,7 @@ class RiskAgent:
             if float(highest["congestion_index"]) >= 0.8 and float(lowest["congestion_index"]) <= 0.55 and reduction >= 0.2:
                 ids.append(item["id"])
                 findings.append({"type": "traffic_disruption_risk", "severity": Severity.HIGH.value, "evidence_id": item["id"], "high_window": highest, "recommended_window": lowest, "confidence": float(confidence), "reduction": round(reduction, 4)})
-        ids.extend([*schedule.evidence_ids, *materials.evidence_ids, *dependencies.evidence_ids, *plan_constraints.evidence_ids])
+        ids.extend([*schedule.evidence_ids, *materials.evidence_ids, *dependencies.evidence_ids, *plan_constraints.evidence_ids, *(design_reality.evidence_ids if design_reality else [])])
         result = AgentResult(self.name, findings, sorted(set(ids)))
         store.record_agent_run(project_id, self.name, {"evidence": evidence, "state": state.findings, "document_findings": documents.findings, "schedule_findings": schedule.findings, "material_findings": materials.findings, "dependency_findings": dependencies.findings, "plan_constraint_findings": plan_constraints.findings}, {"findings": findings, "evidence_ids": result.evidence_ids})
         return result
@@ -326,8 +418,8 @@ class DesignRealityAgent:
 class EscalationAgent:
     """Classifies unresolved recommendations; never escalates by itself."""
     name = "escalation-agent"
-    def run(self, store: Store, project_id: str, evidence: list[dict[str, Any]]) -> AgentResult:
-        recommendations = store.recommendations(project_id)
+    def run(self, store: Store, project_id: str, evidence: list[dict[str, Any]], recommendations: list[dict[str, Any]] | None = None) -> AgentResult:
+        recommendations = recommendations if recommendations is not None else store.recommendations(project_id)
         findings = [{"type": "escalation", "recommendation_id": item["id"], "level": "ESCALATE" if item["severity"] == "high" else "REVIEW", "evidence_ids": item["evidence_ids"], "requires_human_review": True} for item in recommendations if item["status"] == "pending_review"]
         ids = sorted({eid for item in findings for eid in item["evidence_ids"]})
         store.record_agent_run(project_id, self.name, {"recommendation_ids": [item["id"] for item in recommendations]}, {"findings": findings, "evidence_ids": ids})
@@ -346,59 +438,60 @@ class ReportingAgent:
 class RecommendationAgent:
     name = "recommendation-agent"
 
-    def run(self, store: Store, project_id: str, risks: AgentResult) -> list[dict[str, Any]]:
+    def run(self, store: Store, project_id: str, risks: AgentResult, persist: Any | None = None) -> list[dict[str, Any]]:
         created: list[dict[str, Any]] = []
+        persist = persist or (lambda recommendation: recommendation.data())
         for risk in risks.findings:
             if risk["type"] == "multi_factor_environmental_risk":
                 title = "Review environmental context and prerequisite before continuing work"
                 if not risk["evidence_ids"] or store.has_recommendation_for_evidence(project_id, title, risk["evidence_ids"][0]):
                     continue
                 rec = Recommendation(project_id=project_id, title=title, rationale=f"{risk['task_label']} is affected by: {', '.join(risk['factors'])}. Review the task timing and incomplete prerequisite before continuing. Scoring is a configurable planning heuristic, not an engineering certification.", severity=Severity(risk["severity"]), evidence_ids=risk["evidence_ids"], proposed_task={"title": "Review environmental constraints and prerequisite", "assignee_role": "site_engineer", "due_within_hours": 12, "requires_human_confirmation": True})
-                created.append(store.add_recommendation(rec))
+                created.append(persist(rec))
             if risk["type"] == "weather_window_risk":
                 if store.has_recommendation_for_evidence(project_id, "Review waterproofing schedule before forecast rain", risk["evidence_id"]):
                     continue
                 activities = risk.get("document_activities", [])
                 document_note = f" Document evidence references {', '.join(activities)}." if activities else ""
                 rec = Recommendation(project_id=project_id, title="Review waterproofing schedule before forecast rain", rationale=f"Forecast evidence reports {risk['rain_probability']:.0%} rain probability within {risk['hours_until']} hours.{document_note} Validate drainage and move weather-sensitive work only after engineer review.", severity=Severity.HIGH, evidence_ids=risk.get("evidence_ids", [risk["evidence_id"]]), proposed_task={"title": "Review weather-sensitive work package", "assignee_role": "site_engineer", "due_within_hours": risk["hours_until"], "requires_human_confirmation": True})
-                created.append(store.add_recommendation(rec))
+                created.append(persist(rec))
             if risk["type"] == "progress_reconciliation_conflict":
                 if store.has_recommendation_for_evidence(project_id, "Verify reported progress against planned quantity", risk["evidence_id"]):
                     continue
                 rec = Recommendation(project_id=project_id, title="Verify reported progress against planned quantity", rationale=f"Worker report is {risk['reported_percent']}% while derived completion is {risk['derived_percent']}%. This discrepancy requires manual verification before schedule changes.", severity=Severity.MEDIUM, evidence_ids=[risk["evidence_id"]], proposed_task={"title": "Verify quantity and progress report", "assignee_role": "site_engineer", "due_within_hours": 24, "requires_human_confirmation": True})
-                created.append(store.add_recommendation(rec))
+                created.append(persist(rec))
             if risk["type"] == "site_access_obstruction":
                 if store.has_recommendation_for_evidence(project_id, "Verify and clear detected site access obstruction", risk["evidence_id"]):
                     continue
                 rec = Recommendation(project_id=project_id, title="Verify and clear detected site access obstruction", rationale="Local perception found a potential access obstruction. Verify the observation on site before removing material or changing traffic controls; this is not a safety or engineering certification.", severity=Severity.HIGH, evidence_ids=[risk["evidence_id"]], proposed_task={"title": "Verify site access route", "assignee_role": "site_engineer", "due_within_hours": 4, "requires_human_confirmation": True})
-                created.append(store.add_recommendation(rec))
+                created.append(persist(rec))
             if risk["type"] == "traffic_disruption_risk":
                 if store.has_recommendation_for_evidence(project_id, "Review lower-disruption lane-closure window", risk["evidence_id"]):
                     continue
                 high, recommended = risk["high_window"], risk["recommended_window"]
                 rec = Recommendation(project_id=project_id, title="Review lower-disruption lane-closure window", rationale=f"Sourced traffic evidence shows congestion index {high['congestion_index']:.2f} during {high['start_time']}–{high['end_time']} and {recommended['congestion_index']:.2f} during {recommended['start_time']}–{recommended['end_time']} ({risk['confidence']:.0%} source confidence). Review the lower-disruption window with traffic and site teams before changing road controls; this is not a traffic forecast.", severity=Severity.HIGH, evidence_ids=[risk["evidence_id"]], proposed_task={"title": "Review traffic-management work window", "assignee_role": "traffic_manager", "due_within_hours": 4, "requires_human_confirmation": True})
-                created.append(store.add_recommendation(rec))
+                created.append(persist(rec))
             if risk["type"] == "schedule_progress_variance":
                 if store.has_recommendation_for_evidence(project_id, "Review schedule variance before next work window", risk["evidence_id"]):
                     continue
                 rec = Recommendation(project_id=project_id, title="Review schedule variance before next work window", rationale=f"Schedule evidence expects {risk['planned_percent']:.0f}% completion for {risk['task_ref']}, while the latest progress evidence reports {risk['reported_percent']:.0f}%. The {risk['variance_percent']:.0f}-point variance has {risk['days_remaining']} day(s) remaining; confirm recovery actions with the responsible engineer.", severity=Severity(risk["severity"]), evidence_ids=risk["evidence_ids"], proposed_task={"title": "Review schedule recovery options", "assignee_role": "project_manager", "due_within_hours": min(max(risk["days_remaining"] * 24, 4), 24), "requires_human_confirmation": True})
-                created.append(store.add_recommendation(rec))
+                created.append(persist(rec))
             if risk["type"] == "material_progress_variance":
                 if store.has_recommendation_for_evidence(project_id, "Verify material use against reported progress", risk["evidence_id"]):
                     continue
                 direction = "above" if risk["variance_units"] > 0 else "below"
                 rec = Recommendation(project_id=project_id, title="Verify material use against reported progress", rationale=f"Progress evidence for {risk['task_ref']} reports {risk['reported_percent']:.0f}% completion and {risk['actual_material_units']:.2f} material units. That is {abs(risk['variance_units']):.2f} units {direction} the {risk['expected_material_units']:.2f} expected from the planned {risk['planned_material_units']:.2f} units; verify quantities before procurement or schedule changes.", severity=Severity(risk["severity"]), evidence_ids=[risk["evidence_id"]], proposed_task={"title": "Verify material quantities and progress", "assignee_role": "site_engineer", "due_within_hours": 24, "requires_human_confirmation": True})
-                created.append(store.add_recommendation(rec))
+                created.append(persist(rec))
             if risk["type"] == "unfinished_task_prerequisite":
                 if store.has_recommendation_for_evidence(project_id, "Verify unfinished prerequisite before continuing work", risk["evidence_id"]):
                     continue
                 rec = Recommendation(project_id=project_id, title="Verify unfinished prerequisite before continuing work", rationale=f"{risk['dependent_task_label']} is {risk['dependent_status'].replace('_', ' ')}, but its recorded prerequisite {risk['prerequisite_task_label']} remains {risk['prerequisite_status'].replace('_', ' ')}. Verify the sequence on site before continuing or accepting dependent work.", severity=Severity(risk["severity"]), evidence_ids=risk["evidence_ids"], proposed_task={"title": "Verify prerequisite completion and work sequence", "assignee_role": "site_engineer", "due_within_hours": 4, "requires_human_confirmation": True})
-                created.append(store.add_recommendation(rec))
+                created.append(persist(rec))
             if risk["type"] == "documented_prerequisite_unverified":
                 if store.has_recommendation_for_evidence(project_id, "Verify documented prerequisite before continuing work", risk["evidence_id"]):
                     continue
                 rec = Recommendation(project_id=project_id, title="Verify documented prerequisite before continuing work", rationale=f"The verified plan quote “{risk['evidence_quote']}” records {risk['predecessor_task_label']} before {risk['dependent_task_label']}. The dependent task is {risk['dependent_status'].replace('_', ' ')}, while the predecessor remains {risk['predecessor_status'].replace('_', ' ')}. Verify the documented prerequisite with the responsible engineer before accepting or changing work.", severity=Severity.MEDIUM, evidence_ids=risk["evidence_ids"], proposed_task={"title": "Verify documented work prerequisite", "assignee_role": "site_engineer", "due_within_hours": 8, "requires_human_confirmation": True})
-                created.append(store.add_recommendation(rec))
+                created.append(persist(rec))
         store.record_agent_run(project_id, self.name, {"risks": risks.findings}, {"recommendations": [r["id"] for r in created]})
         return created
 
@@ -406,8 +499,9 @@ class RecommendationAgent:
 class OpenMeshOrchestrator:
     """Coordinates bounded agents; it cannot execute consequential changes without review."""
 
-    def __init__(self, store: Store) -> None:
+    def __init__(self, store: Store, recommendation_persister: Any | None = None) -> None:
         self.store = store
+        self.recommendation_persister = recommendation_persister
         self.document_agent = DocumentAgent()
         self.state_agent = ProjectStateAgent()
         self.schedule_agent = ScheduleAgent()
@@ -431,9 +525,22 @@ class OpenMeshOrchestrator:
         plan_constraints = self.plan_constraint_agent.run(self.store, project_id, evidence)
         context_fusion = self.context_fusion_agent.run(self.store, project_id, evidence)
         design_reality = self.design_reality_agent.run(self.store, project_id, evidence)
-        risks = self.risk_agent.run(self.store, project_id, evidence, state, documents, schedule, materials, dependencies, plan_constraints)
+        risks = self.risk_agent.run(self.store, project_id, evidence, state, documents, schedule, materials, dependencies, plan_constraints, design_reality)
         risks = AgentResult(risks.agent, [*risks.findings, *context_fusion.findings], sorted(set([*risks.evidence_ids, *context_fusion.evidence_ids])))
-        recommendations = self.recommendation_agent.run(self.store, project_id, risks)
-        escalation = self.escalation_agent.run(self.store, project_id, evidence)
+        for agent_result in (documents, state, schedule, materials, dependencies, plan_constraints, context_fusion, design_reality, risks):
+            validate_agent_result(self.store, project_id, agent_result)
+        pending_recommendations: list[Recommendation] = []
+        def collect_recommendation(recommendation: Recommendation) -> dict[str, Any]:
+            proposal = validate_recommendation_proposal(project_id, recommendation)
+            pending_recommendations.append(proposal)
+            return proposal.data()
+
+        proposals = self.recommendation_agent.run(self.store, project_id, risks, collect_recommendation)
+        existing_recommendations = self.store.recommendations(project_id)
+        escalation = self.escalation_agent.run(self.store, project_id, evidence, [*existing_recommendations, *proposals])
         report = self.reporting_agent.run(self.store, project_id, evidence)
+        for agent_result in (escalation, report):
+            validate_agent_result(self.store, project_id, agent_result)
+        escalation_records = [{**finding, "project_id": project_id, "fixture": any(item.get("fixture") for item in self.store.evidence(project_id) if item["id"] in finding["evidence_ids"])} for finding in escalation.findings]
+        recommendations = self.store.persist_operational_batch(pending_recommendations, escalation_records)
         return {"project_id": project_id, "agent_results": [{"agent": documents.agent, "findings": documents.findings}, {"agent": state.agent, "findings": state.findings}, {"agent": schedule.agent, "findings": schedule.findings}, {"agent": materials.agent, "findings": materials.findings}, {"agent": dependencies.agent, "findings": dependencies.findings}, {"agent": plan_constraints.agent, "findings": plan_constraints.findings}, {"agent": context_fusion.agent, "findings": context_fusion.findings}, {"agent": design_reality.agent, "findings": design_reality.findings}, {"agent": risks.agent, "findings": risks.findings}, {"agent": escalation.agent, "findings": escalation.findings}, {"agent": report.agent, "findings": report.findings}], "recommendations": recommendations, "human_approval_required": any(r.get("proposed_task") for r in recommendations)}

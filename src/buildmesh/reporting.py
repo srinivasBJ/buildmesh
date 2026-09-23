@@ -19,6 +19,13 @@ def build_daily_report(store: Store, project_id: str) -> dict[str, Any]:
     assignments = [edge for edge in graph["edges"] if edge["relation"] == "assigned_to"]
     by_kind = Counter(item["kind"] for item in evidence)
     by_status = Counter(item["status"] for item in recommendations)
+    open_items = [item for item in recommendations if item["status"] == "pending_review"]
+    categories = {"design_conflicts": [], "environmental_risks": [], "material_variances": [], "reviews_required": open_items, "recommended_actions": open_items}
+    for item in open_items:
+        title = item["title"].casefold()
+        if "design" in title or "spatial" in title or "as-built" in title: categories["design_conflicts"].append(item)
+        if "environment" in title or "weather" in title or "traffic" in title: categories["environmental_risks"].append(item)
+        if "material" in title: categories["material_variances"].append(item)
     return {
         "report_type": "daily_project_intelligence",
         "project": graph["project"],
@@ -32,7 +39,11 @@ def build_daily_report(store: Store, project_id: str) -> dict[str, Any]:
             "recommendation_status": dict(by_status),
             "evidence_by_kind": dict(by_kind),
             "event_count": len(events),
+            "progress": {"completed_tasks": task_status.get("completed", 0), "in_progress_tasks": task_status.get("in_progress", 0)},
+            "blocked_tasks": [node["id"] for node in task_nodes if node["attributes"].get("status") == "blocked"],
+            **{key: value if key not in {"reviews_required", "recommended_actions"} else len(value) for key, value in categories.items()},
         },
+        "operational_categories": categories,
         "open_recommendations": [item for item in recommendations if item["status"] == "pending_review"],
         "recent_events": events[:20],
         "provenance_note": "Recommendations are evidence-backed. Approval records are retained before proposed tasks are materialized.",

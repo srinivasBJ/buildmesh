@@ -1,0 +1,20 @@
+{
+  "input_specs": {
+    "image": {
+      "dtype": "float32",
+      "shape": [
+        1,
+        3,
+        256,
+        256
+      ]
+    }
+  },
+  "job_id": "jpe7z89v5",
+  "options": "",
+  "status": "SUCCESS",
+  "target_model_id": "mqeyzkj5m",
+  "target_model_name": "job_jpe7z89v5_optimized_tflite",
+  "target_model_type": "TFLITE",
+  "url": "https://workbench.aihub.qualcomm.com/jobs/jpe7z89v5/"
+}
