@@ -2,7 +2,7 @@
 
 BuildMesh is a bounded construction intelligence layer that connects planned BIM/IFC state, observed reality, evidence, project risk, and human-approved operational actions. It is an auditable backend: inputs and model outputs are evidence, agents make structured proposals, and consequential changes require human approval.
 
-![BuildMesh evidence-grounded operational architecture](docs/assets/buildmesh-architecture.svg)
+![BuildMesh operational architecture](docs/assets/buildmesh-operational-architecture.png)
 
 ## What BuildMesh Does
 
